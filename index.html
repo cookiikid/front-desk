@@ -872,7 +872,7 @@ var QKB = (function () {
     var b = /cc|commons/.test(k) ? 'CC' : /sc|student/.test(k) ? 'SC' : 'L';
     var room = m[2] + m[3] + (m[4] || '').toUpperCase(), floor = Number(m[2]);
     var name = { CC: 'Campus Commons', SC: 'Student Center', L: 'Library' }[b];
-    return { id: 'room:' + b + room, kind: 'place', title: name + ' ' + room, say: route(b, floor, room), facts: [], queue: null };
+    return { id: 'room:' + b + room, kind: 'place', title: name + ' ' + room, say: route(b, floor, room), facts: [], queue: null, map: b + '-' + room };
   }
   function today() { var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
   var WHERE_RE = /\b(where|wheres|how do i get|how do i find|how to get|location|located|which building|what building|what room|donde|dónde)\b/i;
@@ -881,7 +881,7 @@ var QKB = (function () {
     kb = data; index = [];
     (kb.places || []).forEach(function (pl) {
       kb.cards.push({ id: 'place-' + pl.id, kind: 'place', title: pl.name + (pl.room && pl.b !== 'off' ? ' — ' + (pl.b === 'L' ? 'Library ' : pl.b + ' ') + pl.room : ''),
-        say: pl.say || route(pl.b, pl.floor, pl.room), facts: pl.facts || [], triggers: pl.triggers, until: pl.until });
+        say: pl.say || route(pl.b, pl.floor, pl.room), facts: pl.facts || [], triggers: pl.triggers, until: pl.until, map: pl.map || null });
     });
     (kb.cards || []).forEach(function (c) {
       index.push({ card: c, triggers: (c.triggers || []).map(function (t) { return norm(t); }) });
@@ -940,7 +940,7 @@ var QKB = (function () {
   }
   // Attach live dates (e.g. next withdraw deadline) to a card.
   function render(c) {
-    var out = { id: c.id, kind: c.kind || 'tip', title: c.title, say: c.say, facts: (c.facts || []).slice(), queue: c.queue || null };
+    var out = { id: c.id, kind: c.kind || 'tip', title: c.title, say: c.say, facts: (c.facts || []).slice(), queue: c.queue || null, map: c.map || null };
     if (c.dates) upcoming(400, c.dates).slice(0, 3).forEach(function (d) { out.facts.push(fmtDate(d.date) + ': ' + d.label); });
     return out;
   }
