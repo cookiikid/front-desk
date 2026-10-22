@@ -58,6 +58,7 @@
   .field { display: flex; gap: 6px; align-items: center; }
   .field input { flex: 1; min-width: 0; font: inherit; font-size: 17px; padding: 10px 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--field); color: var(--text); }
   .field input.auto { border-color: var(--accent); }
+  .field input.ok { border-color: var(--ok); box-shadow: 0 0 0 2px rgba(45,179,74,.18); }
   .field .fmic { flex: 0 0 44px; height: 44px; border-radius: 10px; border: 1px solid var(--line); background: var(--chip); font-size: 18px; }
   .field .fmic.on { background: var(--listen); border-color: var(--listen); }
   #lookup { font-size: 14px; padding: 10px 12px; border-radius: 10px; background: var(--chip); margin-bottom: 12px; }
@@ -87,6 +88,25 @@
   .switch input[type=range] { flex: 1; }
   .btn { border: 0; border-radius: 10px; padding: 11px 14px; font: inherit; font-weight: 600; background: var(--accent); color: var(--accent-ink); }
   .btn.grey { background: var(--chip); color: var(--text); }
+  #trBox:empty { display: none; }
+  #trBox { margin-top: 8px; } #trBox div { font-size: 14px; padding: 6px 8px; border-radius: 8px; background: rgba(26,154,214,.12); margin-top: 4px; }
+  #trBox small { display: block; color: var(--muted); font-size: 11px; }
+  .kpbtn { border: 1px solid var(--line); background: var(--chip); color: var(--text); border-radius: 10px; font: inherit; font-size: 14px; padding: 8px 10px; margin-top: 8px; }
+  #keypad { position: fixed; inset: 0; z-index: 50; background: #0d1520; color: #fff; display: flex; align-items: center; justify-content: center; padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom); }
+  #keypad[hidden] { display: none; }
+  #keypad.flip .kp-inner { transform: rotate(180deg); }
+  .kp-inner { width: min(100%, 420px); text-align: center; }
+  .kp-title { font-size: 26px; font-weight: 700; line-height: 1.2; } .kp-title span { display: block; font-size: 18px; font-weight: 500; color: #9fb3c8; margin-top: 4px; }
+  .kp-num { font: 600 40px/1.2 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 1px; margin: 18px 0 14px; min-height: 50px; }
+  .kp-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .kp-grid button { height: 76px; border-radius: 18px; border: 0; background: #1f2d3d; color: #fff; font-size: 34px; font-weight: 600; }
+  .kp-grid button:active { background: #2f4660; }
+  .kp-grid .ok { background: #1f9d4c; } .kp-grid .ok:disabled { opacity: .35; }
+  .kp-heard { margin: 0 0 14px; padding: 12px; border-radius: 14px; background: #16324d; font-size: 18px; }
+  .kp-heard b { display: block; font: 600 30px ui-monospace, Menlo, monospace; margin: 4px 0 8px; }
+  .kp-heard button { border: 0; border-radius: 12px; background: #1f9d4c; color: #fff; font-size: 20px; font-weight: 700; padding: 10px 18px; }
+  .kp-close { position: absolute; top: calc(env(safe-area-inset-top) + 10px); right: 14px; background: none; border: 0; color: #9fb3c8; font-size: 30px; }
+  .kp-done { font-size: 34px; font-weight: 700; padding: 40px 0; }
   #pairScreen { padding-top: 30px; text-align: center; }
   #pairScreen textarea { width: 100%; height: 80px; margin: 10px 0; border-radius: 10px; border: 1px solid var(--line); background: var(--field); color: var(--text); padding: 8px; font: 14px ui-monospace, monospace; }
 </style>
@@ -124,6 +144,8 @@
       <textarea id="transcript" placeholder="Tap the mic once — it stays on. Talk with the student normally; everything fills in by itself."></textarea>
     </div>
     <div class="hint" id="hint"></div>
+    <div id="trBox"></div>
+    <button class="kpbtn" id="kpOpen" type="button">🔢 Keypad for the student</button>
   </div>
 
   <div id="lookup"></div>
@@ -155,6 +177,11 @@
   <div id="result" hidden></div>
 </div>
 
+<div id="keypad" hidden>
+  <button class="kp-close" id="kpClose" aria-label="Close">×</button>
+  <div class="kp-inner" id="kpInner"></div>
+</div>
+
 <dialog id="settings">
   <h2>Settings</h2>
   <label class="switch">Hands-free: auto-add when everything's filled <input type="checkbox" id="autoAdd"></label>
@@ -164,16 +191,20 @@
     <select id="engine"><option value="deepgram">Deepgram (accents, languages)</option><option value="apple">Apple (free, English)</option></select></label>
   <label class="switch">Languages
     <select id="language"><option value="multi">Auto-detect (English + Spanish + more)</option><option value="en">English only</option></select></label>
+  <label class="switch">Automatic mic level (recommended) <input type="checkbox" id="autoGain"></label>
   <label class="switch">Mic boost <input type="range" id="boost" min="1" max="8" step="0.5"><span id="boostVal"></span></label>
   <label class="switch">Skip silence (saves Deepgram credit) <input type="checkbox" id="skipSilence"></label>
   <label class="switch">Noisy-room mode (phone right in front of the student) <input type="checkbox" id="noisy"></label>
+  <label class="switch">Show the keypad when I ask for their number <input type="checkbox" id="kpAuto"></label>
+  <label class="switch">Phone stands upside down (flip the keypad for the student) <input type="checkbox" id="kpFlip"></label>
   <label class="switch">Deepgram key <input type="password" id="dgKey" placeholder="set on the PC"></label>
   <p id="engineInfo"></p>
   <h2 style="margin-top:14px">Placing the phone</h2>
   <ul>
     <li>Stand the phone up on the counter <b>on the student's side of the monitor</b> (or on top of it), bottom edge pointing at them. Every halving of the distance is like them speaking twice as loud.</li>
     <li>Don't put it behind the monitor or flat behind your keyboard — the screen blocks the voice.</li>
-    <li>Watch the green bar under the mic while they talk: it should reach about half. If it barely moves, raise Mic boost; if it turns orange, lower it.</li>
+    <li>Leave <b>Automatic mic level</b> on. If the green bar barely moves while they talk, move the phone closer (0.5–1 m, pointed at them) — that helps far more than boost.</li>
+    <li>Phone numbers and IDs are listened to twice. A green box means both listens agreed; otherwise the student gets "Is this your number?" on the keypad.</li>
     <li>Keep the phone plugged in and this page open in Safari (the screen stays on by itself).</li>
     <li>Say <b>"next student"</b> to clear, <b>"stop"</b> / <b>"wait"</b> to cancel an auto-add, <b>"go ahead"</b> to add now.</li>
   </ul>
@@ -622,25 +653,30 @@ var QParse = (function () {
 </script>
 <script>
 /* QSpeech — microphone -> text.
- *  'deepgram': raw mic (no iOS voice processing, which suppresses far-away voices) -> boost + compressor
- *              -> 16 kHz PCM -> Deepgram Nova-3 streaming (multilingual, keyterms). Silence is skipped to save money.
+ *  'deepgram': raw mic (no iOS voice processing, which suppresses far-away voices) -> 16 kHz -> high-pass + automatic gain
+ *              + look-ahead limiter (QSpeech._dsp, shared with test/speech/eval.js) -> Deepgram Nova-3 streaming.
+ *              Silence is skipped to save money. Everything sent is kept for 60 s so recheck() can re-transcribe a span
+ *              (e.g. the phone number) with Deepgram's pre-recorded API, which is more accurate on digits.
+ *              Auto noisy-room mode switches the mic to iOS voice processing only when the lobby is extremely loud.
  *  'apple':    Safari's built-in webkitSpeechRecognition (free fallback).
- * Both call onText(text, isFinal) with the same contract: interim text replaces the previous interim, a final commits it. */
+ * Both call onText(text, isFinal, speechFinal, meta): interim text replaces the previous interim, a final commits it.
+ * meta (Deepgram only) = { words: [{word, punctuated, start, end, confidence, language}], start, duration, lang, epoch }
+ * with stream-time seconds that recheck(from, to) understands. */
 var QSpeech = (function () {
   'use strict';
+  var SR = 16000;
 
+  // Float32 frames at 16 kHz (box-filter decimation; an IIR low-pass in front of it in the graph limits aliasing).
   var WORKLET = [
     'class Down16k extends AudioWorkletProcessor {',
-    '  constructor() { super(); this.ratio = sampleRate / 16000; this.pos = 0; this.sum = 0; this.cnt = 0; this.frame = new Int16Array(800); this.n = 0; }',
+    '  constructor() { super(); this.ratio = sampleRate / 16000; this.pos = 0; this.sum = 0; this.cnt = 0; this.frame = new Float32Array(800); this.n = 0; }',
     '  process(inputs) {',
     '    var ch = inputs[0] && inputs[0][0]; if (!ch) return true;',
     '    for (var i = 0; i < ch.length; i++) {',
     '      this.sum += ch[i]; this.cnt++; this.pos += 1;',
     '      if (this.pos >= this.ratio) {',
-    '        this.pos -= this.ratio; var v = this.sum / this.cnt; this.sum = 0; this.cnt = 0;',
-    '        v = v > 1 ? 1 : v < -1 ? -1 : v;',
-    '        this.frame[this.n++] = v < 0 ? v * 32768 : v * 32767;',
-    '        if (this.n === this.frame.length) { this.port.postMessage(this.frame.buffer, [this.frame.buffer]); this.frame = new Int16Array(800); this.n = 0; }',
+    '        this.pos -= this.ratio; this.frame[this.n++] = this.sum / this.cnt; this.sum = 0; this.cnt = 0;',
+    '        if (this.n === this.frame.length) { this.port.postMessage(this.frame.buffer, [this.frame.buffer]); this.frame = new Float32Array(800); this.n = 0; }',
     '      }',
     '    }',
     '    return true;',
@@ -649,36 +685,299 @@ var QSpeech = (function () {
     "registerProcessor('down16k', Down16k);"
   ].join('\n');
 
-  function rms(i16) {
-    var s = 0;
-    for (var i = 0; i < i16.length; i++) { var v = i16[i] / 32768; s += v * v; }
-    return Math.sqrt(s / i16.length);
+  function dB(x) { return 20 * Math.log10(Math.max(x, 1e-9)); }
+  function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+
+  // ======================= DSP (pure, no browser APIs) =======================
+  // FrontEnd: 16 kHz float frames in -> Int16 frames out (same length).
+  //   high-pass 90 Hz -> gain (automatic or manual) -> 2 ms look-ahead peak limiter at -1 dBFS (nothing ever clips).
+  //   Also: noise floor (dBFS, 15th percentile of the last 4 s of frame levels) and a relative voice-activity flag.
+  // AGC: tracks the active speech level (power average over frames clearly above the noise, door slams rejected)
+  //   and steers the gain so speech sits at targetDb, within 1x..10x (0..20 dB). Up 10 dB/s, down 15 dB/s, and an
+  //   immediate -2 dB step whenever speech (not a transient) would have clipped.
+  function FrontEnd(o) {
+    o = o || {};
+    this.auto = o.autoGain !== false;
+    this.targetDb = o.targetDb != null ? o.targetDb : -20;
+    this.maxDb = o.maxGainDb != null ? o.maxGainDb : 20;
+    this.minDb = o.minGainDb != null ? o.minGainDb : 0;
+    this.gDb = clamp(dB(o.boost || o.gain || 3), this.minDb, this.maxDb);
+    this.manualDb = dB(o.boost || o.gain || 3);
+    this.ceil = Math.pow(10, -1 / 20);
+    this.noiseDb = null; this.hist = []; this.histMax = 80; // 80 x 50 ms = 4 s
+    this.speechP = null; this.speechDb = null;
+    // high-pass biquad (RBJ, Butterworth)
+    var w0 = 2 * Math.PI * (o.highpass || 90) / SR, c = Math.cos(w0), al = Math.sin(w0) / (2 * Math.SQRT1_2), a0 = 1 + al;
+    this.hb0 = (1 + c) / 2 / a0; this.hb1 = -(1 + c) / a0; this.hb2 = this.hb0; this.ha1 = -2 * c / a0; this.ha2 = (1 - al) / a0;
+    this.x1 = this.x2 = this.y1 = this.y2 = 0;
+    // limiter
+    this.L = o.lookahead != null ? o.lookahead : 32;
+    this.dl = new Float32Array(this.L + 1); this.rq = new Float32Array(this.L + 1); this.di = 0;
+    for (var i = 0; i <= this.L; i++) this.rq[i] = 1;
+    this.lg = 1; this.rel = 1 - Math.exp(-1 / (0.06 * SR));
+    this.curG = Math.pow(10, this.gDb / 20);
+  }
+  FrontEnd.prototype.setManual = function (x) { this.auto = false; this.manualDb = dB(x); this.gDb = this.manualDb; };
+  FrontEnd.prototype.setAuto = function (on) { this.auto = on !== false; };
+  FrontEnd.prototype.gain = function () { return Math.pow(10, (this.auto ? this.gDb : this.manualDb) / 20); };
+  FrontEnd.prototype.process = function (inp) {
+    var n = inp.length, dt = n / SR, hp = new Float32Array(n), s2 = 0, pk = 0, i;
+    for (i = 0; i < n; i++) {
+      var x = inp[i], y = this.hb0 * x + this.hb1 * this.x1 + this.hb2 * this.x2 - this.ha1 * this.y1 - this.ha2 * this.y2;
+      this.x2 = this.x1; this.x1 = x; this.y2 = this.y1; this.y1 = y;
+      hp[i] = y; s2 += y * y; var a = y < 0 ? -y : y; if (a > pk) pk = a;
+    }
+    var rms = Math.sqrt(s2 / n), inDb = dB(rms);
+    // noise floor: low percentile of recent frame levels (works with continuous babble too)
+    this.hist.push(inDb); if (this.hist.length > this.histMax) this.hist.shift();
+    var sorted = this.hist.slice().sort(function (p, q) { return p - q; });
+    var pct = sorted[Math.floor(sorted.length * 0.15)];
+    this.noiseDb = this.noiseDb == null ? pct : this.noiseDb + (pct - this.noiseDb) * Math.min(1, dt / 0.5);
+    var speaking = inDb > this.noiseDb + 6 && inDb > -80;
+    var confident = inDb > this.noiseDb + 10 && inDb > -75;
+    var transient = pk / Math.max(rms, 1e-9) > 9 || (this.speechDb != null && inDb > this.speechDb + 12);
+    if (confident && !transient) {
+      var p = rms * rms;
+      this.speechP = this.speechP == null ? p : this.speechP + (Math.min(p, this.speechP * 16) - this.speechP) * Math.min(1, dt / 0.6);
+      this.speechDb = 10 * Math.log10(this.speechP);
+    }
+    if (this.auto) {
+      if (this.speechDb != null) {
+        var want = clamp(this.targetDb - this.speechDb, this.minDb, this.maxDb);
+        this.gDb = want > this.gDb ? Math.min(want, this.gDb + 10 * dt) : Math.max(want, this.gDb - 15 * dt);
+      }
+      if (confident && !transient && pk * Math.pow(10, this.gDb / 20) > 1.4) this.gDb = Math.max(this.minDb, this.gDb - 2);
+    } else this.gDb = this.manualDb;
+    // gain (ramped across the frame) + look-ahead limiter
+    var g0 = this.curG, g1 = Math.pow(10, this.gDb / 20), out = new Int16Array(n), L = this.L, M = L + 1, o2 = 0, prePk = 0, minLg = 1;
+    for (i = 0; i < n; i++) {
+      var g = g0 + (g1 - g0) * (i + 1) / n, v = hp[i] * g, av = v < 0 ? -v : v;
+      if (av > prePk) prePk = av;
+      var w = this.di; this.dl[w] = v; this.rq[w] = av > this.ceil ? this.ceil / av : 1; this.di = (w + 1) % M;
+      var need = 1; for (var k = 0; k < M; k++) if (this.rq[k] < need) need = this.rq[k];
+      this.lg = need < this.lg ? need : this.lg + (need - this.lg) * this.rel;
+      if (this.lg < minLg) minLg = this.lg;
+      var d = this.dl[this.di] * this.lg; // oldest sample in the ring = L samples ago
+      d = d > 1 ? 1 : d < -1 ? -1 : d;
+      out[i] = d < 0 ? Math.round(d * 32768) : Math.round(d * 32767);
+      o2 += d * d;
+    }
+    this.curG = g1;
+    return {
+      pcm: out, level: Math.sqrt(o2 / n), speaking: speaking, gain: g1, inDb: inDb, noiseDb: this.noiseDb,
+      speechDb: this.speechDb, clipping: prePk >= 1, limitDb: -dB(minLg)
+    };
+  };
+
+  // Silence skipping: send while speaking + 1.5 s hangover, with 400 ms of pre-roll so first syllables survive.
+  function Gate(skip, hangFrames, preFrames) { this.skip = !!skip; this.hangN = hangFrames || 30; this.preN = preFrames || 8; this.hang = 0; this.pre = []; }
+  Gate.prototype.push = function (pcm, speaking) {
+    if (speaking) this.hang = this.hangN; else if (this.hang > 0) this.hang--;
+    if (!this.skip || this.hang > 0) { var outF = this.pre.concat([pcm]); this.pre = []; return outF; }
+    this.pre.push(pcm); if (this.pre.length > this.preN) this.pre.shift();
+    return [];
+  };
+
+  // Rolling store of exactly what was sent to Deepgram (so stream timestamps index into it).
+  function SentBuffer(seconds) { this.cap = Math.round((seconds || 60) * SR); this.buf = new Int16Array(this.cap); this.total = 0; }
+  SentBuffer.prototype.append = function (pcm) {
+    for (var i = 0; i < pcm.length; i++) this.buf[(this.total + i) % this.cap] = pcm[i];
+    this.total += pcm.length;
+  };
+  SentBuffer.prototype.slice = function (from, to) { // absolute sample indices
+    from = Math.max(Math.round(from), this.total - this.cap, 0); to = Math.min(Math.round(to), this.total);
+    if (to <= from) return null;
+    var out = new Int16Array(to - from);
+    for (var i = 0; i < out.length; i++) out[i] = this.buf[(from + i) % this.cap];
+    return out;
+  };
+
+  function wav(pcm) {
+    var b = new ArrayBuffer(44 + pcm.length * 2), v = new DataView(b), s = 'RIFF____WAVEfmt ____________________data';
+    for (var i = 0; i < 40; i++) v.setUint8(i, s.charCodeAt(i));
+    v.setUint32(4, 36 + pcm.length * 2, true); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, SR, true); v.setUint32(28, SR * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+    v.setUint32(40, pcm.length * 2, true);
+    new Int16Array(b, 44).set(pcm);
+    return b;
   }
 
-  // ---------------- Deepgram ----------------
-  function Deepgram(o) {
-    this.o = o; this.running = false; this.boost = o.boost || 3; this.queue = [];
-  }
-  Deepgram.prototype.url = function () {
+  // ======================= Deepgram settings =======================
+  // Streaming: see test/speech/eval.js for the measurements behind these defaults.
+  function streamParams(o) {
+    o = o || {};
+    var lang = o.language || 'multi';
     var p = [
-      'model=nova-3', 'language=' + (this.o.language || 'multi'), 'encoding=linear16', 'sample_rate=16000', 'channels=1',
+      'model=nova-3', 'language=' + lang, 'encoding=linear16', 'sample_rate=16000', 'channels=1',
       'interim_results=true', 'smart_format=true', 'numerals=true', 'punctuate=true',
-      'endpointing=' + (this.o.language === 'en' ? 250 : 100), 'utterance_end_ms=1000', 'vad_events=true', 'mip_opt_out=true'
+      'endpointing=' + (o.endpointing != null ? o.endpointing : 300),
+      'utterance_end_ms=' + (o.utteranceEndMs != null ? o.utteranceEndMs : 1000), 'vad_events=true', 'mip_opt_out=true'
     ];
-    (this.o.keyterms || []).forEach(function (k) { p.push('keyterm=' + encodeURIComponent(k)); });
-    return 'wss://api.deepgram.com/v1/listen?' + p.join('&');
+    (o.keyterms || []).forEach(function (k) { p.push('keyterm=' + encodeURIComponent(k)); });
+    return p;
+  }
+  // Second listen on a short span (pre-recorded API): whole-file context makes digits much more reliable.
+  function recheckParams(o) {
+    o = o || {};
+    var p = ['model=' + (o.model || 'nova-3'), 'language=' + (o.language || 'en'), 'smart_format=true', 'numerals=true', 'punctuate=true', 'mip_opt_out=true'];
+    var kt = [].concat(o.keyterms || []);
+    if (o.prompt) kt = kt.concat(Array.isArray(o.prompt) ? o.prompt : String(o.prompt).split(/\s*[,;\n]\s*/));
+    kt.filter(Boolean).slice(0, 50).forEach(function (k) { p.push('keyterm=' + encodeURIComponent(k)); });
+    (o.extra || []).forEach(function (x) { p.push(x); });
+    return p;
+  }
+  // POST a PCM span to Deepgram pre-recorded. Resolves { transcript, words, lang, confidence } or null (never rejects).
+  function recheckRequest(key, pcm, o, offsetSec) {
+    o = o || {};
+    if (!key || !pcm || pcm.length < SR * 0.3 || typeof fetch !== 'function') return Promise.resolve(null);
+    var ctl = typeof AbortController === 'function' ? new AbortController() : null;
+    var timer = ctl ? setTimeout(function () { ctl.abort(); }, o.timeoutMs || 8000) : null;
+    return fetch('https://api.deepgram.com/v1/listen?' + recheckParams(o).join('&'), {
+      method: 'POST', headers: { Authorization: 'Token ' + key, 'Content-Type': 'audio/wav' }, body: wav(pcm), signal: ctl ? ctl.signal : undefined
+    }).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+      var ch = j && j.results && j.results.channels && j.results.channels[0], alt = ch && ch.alternatives && ch.alternatives[0];
+      if (!alt) return null;
+      var off = offsetSec || 0;
+      return {
+        transcript: alt.transcript || '',
+        words: (alt.words || []).map(function (w) {
+          return { word: w.word, punctuated: w.punctuated_word || w.word, start: w.start + off, end: w.end + off, confidence: w.confidence, language: w.language };
+        }),
+        lang: (alt.languages && alt.languages[0]) || ch.detected_language || (o.language && o.language !== 'multi' ? o.language : null),
+        confidence: alt.confidence
+      };
+    }).catch(function () { return null; }).then(function (res) { if (timer) clearTimeout(timer); return res; });
+  }
+
+  // ======================= picking the number =======================
+  var DIGIT_WORD = /^(zero|oh|o|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|double|triple|cero|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve)$/;
+  var CTX_WORD = /^(phone|number|cell|call|text|mobile|n[uú]mero|tel[eé]fono|celular|id|cwid|i\.d|student|collin|identificaci[oó]n|matr[ií]cula)$/;
+  function bare(w) { return String(w || '').toLowerCase().replace(/^[^\wÀ-ɏ]+|[^\wÀ-ɏ.]+$/g, '').replace(/\.$/, ''); }
+  function digitCount(w) { var b = bare(w); if (/^[\d-]+$/.test(b)) return b.replace(/-/g, '').length; return DIGIT_WORD.test(b) ? 1 : 0; }
+
+  // Where in the stream is the number? words: Deepgram words (meta.words of recent finals, stream seconds).
+  // -> { from, to, digits } for the LAST digit cluster with >= 3 digits (or null). Starts at a context word
+  // ("number", "ID") said up to 2.5 s before, so the recheck hears "my number is ..." (helps formatting).
+  function numberSpan(words) {
+    words = words || [];
+    var best = null, cur = null, gapWords = 0;
+    for (var i = 0; i < words.length; i++) {
+      var w = words[i], d = digitCount(w.punctuated || w.word);
+      if (d) {
+        if (cur && (gapWords > 2 || w.start - cur.end > 1.5)) { if (cur.digits >= 3) best = cur; cur = null; }
+        if (!cur) cur = { i0: i, start: w.start, end: w.end, digits: 0 };
+        cur.end = w.end; cur.digits += d; gapWords = 0;
+      } else if (cur) {
+        gapWords++;
+        if (gapWords > 2) { if (cur.digits >= 3) best = cur; cur = null; }
+      }
+    }
+    if (cur && cur.digits >= 3) best = cur;
+    if (!best) return null;
+    var from = best.start;
+    for (var j = best.i0 - 1; j >= 0 && best.start - words[j].start <= 2.5; j--) if (CTX_WORD.test(bare(words[j].word))) from = words[j].start;
+    return { from: from, to: best.end, digits: best.digits };
+  }
+
+  function getParse(o) {
+    if (o && o.parse) return o.parse;
+    if (typeof QParse !== 'undefined') return QParse; // eslint-disable-line no-undef
+    try { return require('./parse.js'); } catch (e) { return null; }
+  }
+  function nanp(d) { return /^[2-9]\d{2}[2-9]\d{6}$/.test(d || ''); }
+
+  // Choose the phone / CWID from the streaming transcript and the recheck transcript(s).
+  //   bestNumber(streamText, recheckText | [recheckText, ...], { field: 'phone'|'cwid', parse: QParse, ignoreNames })
+  //   -> { phone, cwid, source: 'vote'|'recheck'|'stream'|null, valid, agree, phoneSource, cwidSource }
+  // Policy (measured in test/speech/eval.js, 240 clips x several configs): only VALID values vote (NANP 10-digit phone,
+  // 9-digit CWID); a value two sources agree on wins (stream counts as a source) -> 'vote', 99.7% precise;
+  // else the first valid recheck ('recheck', ~89%); else a valid stream value ('stream'); else whatever was heard
+  // (valid=false: ask the student to repeat). Pass rechecks best-first: [nova-3 en, nova-2 en, nova-3 multi].
+  var VALID = {
+    phone: nanp,
+    cwid: function (d) { return /^\d{9}$/.test(d || '') || /^[a-z]{1,2}\d{6,9}$/.test(d || ''); }
   };
+  // QParse.extract first; if that gives no valid number, a more lenient read of the digit runs:
+  //  - "area code 469 and 712-0330" / "469, then 712..." -> runs joined across one connector word
+  // (11 digits not starting with 1 are left alone: the stray digit is as often at the end as at the start, and a
+  //  confidently wrong number is worse than none.)
+  var CONNECT = { and: 1, then: 1, y: 1, uh: 1, um: 1, dash: 1, hyphen: 1 };
+  function readNumber(P, text, f, o) {
+    var e = P.extract(text, o.ignoreNames ? { ignoreNames: o.ignoreNames } : {})[f] || null;
+    if (f === 'cwid' && /^id\d{9}$/.test(e || '')) e = e.slice(2); // "ID200123456"
+    if (VALID[f](e) || !P.wordsToDigits) return e;
+    if (f === 'cwid' && !/\b(id|i\.d|cwid|student|collin)\b/i.test(text)) return e; // a stray 9-digit run is not an ID
+    var toks = P.wordsToDigits(text), runs = [], cur = '', gap = 0;
+    for (var i = 0; i < toks.length; i++) {
+      var t = toks[i].replace(/[^\w]/g, '');
+      if (/^\d+$/.test(t)) { cur += t; gap = 0; } else if (cur && CONNECT[t] && gap === 0) { gap = 1; } else if (cur) { runs.push(cur); cur = ''; gap = 0; }
+    }
+    if (cur) runs.push(cur);
+    for (var k = runs.length - 1; k >= 0; k--) {
+      var d = runs[k];
+      if (f === 'phone') {
+        if (d.length === 11 && d[0] === '1') d = d.slice(1);
+        if (nanp(d)) return d;
+      } else if (/^\d{9}$/.test(d)) return d;
+    }
+    return e;
+  }
+  function bestNumber(streamText, recheckText, o) {
+    o = o || {};
+    var P = getParse(o), out = { phone: null, cwid: null, source: null, agree: false };
+    if (!P) return out;
+    var rechecks = (Array.isArray(recheckText) ? recheckText : [recheckText]).filter(function (t) { return t != null; });
+    function ex(t) { t = String(t || ''); return { phone: readNumber(P, t, 'phone', o), cwid: readNumber(P, t, 'cwid', o) }; }
+    var s = ex(streamText), rs = rechecks.map(ex);
+    ['phone', 'cwid'].forEach(function (f) {
+      var ok = VALID[f], votes = {}, order = [];
+      // "Q00045678" / "id200123456" (a letter heard in front of the digits) only counts when nobody heard plain 9 digits
+      if (f === 'cwid' && rs.concat([s]).some(function (r) { return /^\d{9}$/.test(r.cwid || ''); })) {
+        ok = function (d) { return /^\d{9}$/.test(d || ''); };
+      }
+      rs.map(function (r) { return r[f]; }).concat([s[f]]).forEach(function (v) {
+        if (!ok(v)) return;
+        if (!votes[v]) { votes[v] = 0; order.push(v); }
+        votes[v]++;
+      });
+      var pick = null, src = null;
+      var top = order.slice().sort(function (a, b) { return votes[b] - votes[a] || order.indexOf(a) - order.indexOf(b); })[0];
+      if (top && votes[top] >= 2) { pick = top; src = 'vote'; }                                     // two sources agree
+      else if (rs.some(function (r) { return ok(r[f]); })) { pick = rs.filter(function (r) { return ok(r[f]); })[0][f]; src = 'recheck'; }
+      else if (ok(s[f])) { pick = s[f]; src = 'stream'; }
+      else {                                                                                         // nothing valid
+        var any = rs.map(function (r) { return r[f]; }).filter(Boolean)[0];
+        if (any) { pick = any; src = 'recheck'; } else if (s[f]) { pick = s[f]; src = 'stream'; }
+      }
+      out[f] = pick; out[f + 'Source'] = src;
+    });
+    var main = o.field || (out.phone ? 'phone' : 'cwid');
+    out.source = out[main + 'Source']; out.agree = !!out[main] && out[main] === s[main];
+    out.valid = VALID[main](out[main]);
+    return out;
+  }
+
+  // ---------------- Deepgram engine ----------------
+  function Deepgram(o) {
+    this.o = o; this.running = false; this.boost = o.boost || 3; this.epoch = 0; this.bases = {};
+    this.fe = new FrontEnd({ autoGain: o.autoGain !== false, boost: this.boost, targetDb: o.targetDb });
+    this.sent = new SentBuffer(60);
+    this.vp = !!o.noisy; this.noisyOn = o.noisyOnDb != null ? o.noisyOnDb : -30; this.noisyOff = o.noisyOffDb != null ? o.noisyOffDb : -40;
+    this.loudFor = 0; this.quietFor = 0; this.vpOffset = 0;
+  }
+  Deepgram.prototype.url = function () { return 'wss://api.deepgram.com/v1/listen?' + streamParams(this.o).join('&'); };
+  function constraints(vp) {
+    // Normal: raw mic (iOS voice processing would suppress a student 1-2 m away).
+    // Voice processing (noisy-room mode): iOS cancels background noise + its own AGC.
+    return { audio: vp ? { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
+      : { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 } };
+  }
   Deepgram.prototype.start = async function () {
     var self = this;
     if (self.running) return;
     self.running = true;
     try {
-      self.stream = await navigator.mediaDevices.getUserMedia({
-        // Normal: raw mic (iOS voice processing would suppress a student 1-2 m away).
-        // Noisy-room mode: let iOS cancel background noise — use when the phone sits right in front of the student.
-        audio: self.o.noisy ? { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 }
-          : { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 }
-      });
+      self.stream = await navigator.mediaDevices.getUserMedia(constraints(self.vp));
     } catch (e) {
       self.running = false;
       self.o.onStatus('Microphone blocked — allow it for this site in Safari settings (aA → Website Settings → Microphone).', true);
@@ -688,36 +987,66 @@ var QSpeech = (function () {
     if (ctx.state === 'suspended') await ctx.resume();
     var url = URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' }));
     await ctx.audioWorklet.addModule(url);
-    var src = ctx.createMediaStreamSource(self.stream);
-    var hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 90; // HVAC rumble / desk thumps
-    self.gain = ctx.createGain(); self.gain.gain.value = self.boost;
-    var comp = ctx.createDynamicsCompressor(); // lifts quiet voices, tames loud ones
-    comp.threshold.value = -38; comp.knee.value = 18; comp.ratio.value = 6; comp.attack.value = 0.003; comp.release.value = 0.25;
+    self.src = ctx.createMediaStreamSource(self.stream);
+    var lp = self.lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 7200; lp.Q.value = 0.707; // anti-alias for 16 kHz
     var node = new AudioWorkletNode(ctx, 'down16k');
     var mute = ctx.createGain(); mute.gain.value = 0;
-    src.connect(hp); hp.connect(self.gain); self.gain.connect(comp); comp.connect(node); node.connect(mute); mute.connect(ctx.destination);
-    self.nodes = [src, hp, self.gain, comp, node, mute];
-
-    // Voice-activity gate: adaptive noise floor; keep 400 ms of pre-roll so first syllables aren't lost.
-    var floor = 0.01, hang = 0, pre = [];
-    node.port.onmessage = function (ev) {
-      var frame = new Int16Array(ev.data), level = rms(frame);
-      floor = level < floor ? floor * 0.9 + level * 0.1 : floor * 0.999 + level * 0.001;
-      var speaking = level > Math.max(floor * 2.2, 0.006);
-      if (speaking) hang = 30; else if (hang > 0) hang--; // 30 x 50 ms = 1.5 s hangover
-      var send = !self.o.skipSilence || hang > 0;
-      self.o.onLevel && self.o.onLevel(level, speaking);
-      if (send) {
-        while (pre.length) self.send(pre.shift());
-        self.send(frame.buffer);
-      } else {
-        pre.push(frame.buffer); if (pre.length > 8) pre.shift();
-      }
-    };
+    self.src.connect(lp); lp.connect(node); node.connect(mute); mute.connect(ctx.destination);
+    self.nodes = [lp, node, mute];
+    self.gate = new Gate(self.o.skipSilence);
+    node.port.onmessage = function (ev) { self.onFrame(new Float32Array(ev.data)); };
     self.connect();
   };
-  Deepgram.prototype.send = function (buf) {
-    if (this.ws && this.ws.readyState === 1) { this.ws.send(buf); this.lastSend = Date.now(); }
+  Deepgram.prototype.onFrame = function (f) {
+    var self = this, r = self.fe.process(f);
+    self.o.onLevel && self.o.onLevel(r.level, r.speaking, { gain: r.gain, noiseDb: Math.round(r.noiseDb), clipping: r.clipping, speechDb: r.speechDb == null ? null : Math.round(r.speechDb) });
+    self.watchNoise(r, f.length / SR);
+    self.gate.push(r.pcm, r.speaking).forEach(function (pcm) { self.send(pcm); });
+  };
+  // Auto noisy-room mode: hysteresis on the noise floor (raw-mic dBFS): > -30 dBFS for 8 s -> voice processing on,
+  // < -40 dBFS for 30 s -> off. Deliberately EXTREME only: in test/speech (Chrome's WebRTC NS+AGC as the stand-in for
+  // iOS voice processing) noise suppression did not improve Deepgram and produced more wrong digits at normal lobby
+  // noise; iOS voice processing also attenuates far-away talkers. -30 dBFS ~ a crowd as loud as a student 1 m away.
+  // In voice-processing mode the measured floor is after noise suppression, so we add back the drop seen at the switch.
+  Deepgram.prototype.watchNoise = function (r, dt) {
+    var self = this;
+    if (self.o.noisy || self.o.autoNoisy === false || self.swapping) return;
+    if (self.vp && self.vpSince != null) {
+      self.vpSince += dt;
+      if (self.vpSince > 3 && self.vpOffset == null) self.vpOffset = Math.max(0, self.noiseAtSwap - r.noiseDb);
+    }
+    var eff = r.noiseDb + (self.vp ? (self.vpOffset || 0) : 0);
+    if (!self.vp) {
+      self.loudFor = eff > self.noisyOn ? self.loudFor + dt : 0;
+      if (self.loudFor >= 8) self.setVoiceProcessing(true, eff);
+    } else if (self.vpOffset != null) {
+      self.quietFor = eff < self.noisyOff ? self.quietFor + dt : 0;
+      if (self.quietFor >= 30) self.setVoiceProcessing(false, eff);
+    }
+  };
+  // Swap the mic source inside the audio graph; the Deepgram socket keeps running.
+  Deepgram.prototype.setVoiceProcessing = async function (on, noiseDb) {
+    var self = this;
+    if (!self.running || self.swapping || !self.ctx) return;
+    self.swapping = true;
+    try {
+      var ns = await navigator.mediaDevices.getUserMedia(constraints(on));
+      if (!self.running || !self.ctx) { ns.getTracks().forEach(function (t) { t.stop(); }); return; }
+      var src = self.ctx.createMediaStreamSource(ns);
+      src.connect(self.lp);
+      try { self.src.disconnect(); } catch (e) {}
+      if (self.stream) self.stream.getTracks().forEach(function (t) { t.stop(); });
+      self.src = src; self.stream = ns; self.vp = on;
+      self.loudFor = self.quietFor = 0;
+      self.noiseAtSwap = noiseDb; self.vpSince = on ? 0 : null; self.vpOffset = on ? null : 0;
+      self.fe.hist = []; // re-learn the floor for the new source
+      self.o.onNoise && self.o.onNoise(on, Math.round(noiseDb));
+    } catch (e) {
+      // keep the current source
+    } finally { self.swapping = false; }
+  };
+  Deepgram.prototype.send = function (pcm) {
+    if (this.ws && this.ws.readyState === 1) { this.ws.send(pcm.buffer); this.sent.append(pcm); this.lastSend = Date.now(); }
   };
   Deepgram.prototype.connect = function () {
     var self = this;
@@ -725,9 +1054,10 @@ var QSpeech = (function () {
     var ws;
     try { ws = new WebSocket(self.url(), ['token', self.o.key]); } catch (e) { self.o.onStatus('Could not reach Deepgram.', true); return; }
     self.ws = ws; ws.binaryType = 'arraybuffer';
-    var opened = false;
+    var opened = false, epoch;
     ws.onopen = function () {
       opened = true; self.fails = 0; self.lastSend = Date.now();
+      epoch = ++self.epoch; self.bases[epoch] = self.sent.total; // stream time 0 of this socket
       self.o.onStatus('Listening (Deepgram)…');
       clearInterval(self.ka);
       self.ka = setInterval(function () {
@@ -739,13 +1069,21 @@ var QSpeech = (function () {
       if (m.type === 'Results') {
         var alt = m.channel && m.channel.alternatives && m.channel.alternatives[0];
         if (!alt) return;
-        if (alt.languages && alt.languages.length && self.o.onLang) self.o.onLang(alt.languages[0]);
-        if (alt.transcript || m.is_final) self.o.onText(alt.transcript || '', !!m.is_final, !!m.speech_final);
+        var lang = alt.languages && alt.languages.length ? alt.languages[0] : null;
+        if (lang && self.o.onLang) self.o.onLang(lang);
+        if (alt.transcript || m.is_final) {
+          self.o.onText(alt.transcript || '', !!m.is_final, !!m.speech_final, {
+            words: (alt.words || []).map(function (w) {
+              return { word: w.word, punctuated: w.punctuated_word || w.word, start: w.start, end: w.end, confidence: w.confidence, language: w.language || lang };
+            }),
+            start: m.start, duration: m.duration, lang: lang, confidence: alt.confidence, epoch: epoch
+          });
+        }
       } else if (m.type === 'UtteranceEnd') {
-        self.o.onText('', true, true);
+        self.o.onText('', true, true, { words: [], start: m.last_word_end, duration: 0, lang: null, epoch: epoch, utteranceEnd: true });
       }
     };
-    ws.onclose = function (ev) {
+    ws.onclose = function () {
       clearInterval(self.ka);
       if (!self.running) return;
       if (!opened) {
@@ -760,27 +1098,78 @@ var QSpeech = (function () {
     };
     ws.onerror = function () {};
   };
-  Deepgram.prototype.setBoost = function (x) { this.boost = x; if (this.gain) this.gain.gain.value = x; };
+  // Re-transcribe [fromSec, toSec] of the current stream (Deepgram stream seconds, e.g. from meta.words) with the
+  // pre-recorded API. opts: { language, keyterms, prompt, model, pad (s, default 0.4), timeoutMs, epoch }.
+  Deepgram.prototype.recheck = function (fromSec, toSec, opts) {
+    opts = opts || {};
+    try {
+      var base = this.bases[opts.epoch || this.epoch];
+      if (base == null || !(toSec > fromSec)) return Promise.resolve(null);
+      var pad = opts.pad != null ? opts.pad : 0.4;
+      var a = base + Math.max(0, fromSec - pad) * SR, b = base + (toSec + pad) * SR;
+      var pcm = this.sent.slice(a, b);
+      if (!pcm) return Promise.resolve(null);
+      var kt = opts.keyterms || this.o.recheckKeyterms;
+      return recheckRequest(this.o.key, pcm, Object.assign({}, opts, { keyterms: kt }), (Math.max(a, this.sent.total - this.sent.cap) - base) / SR);
+    } catch (e) { return Promise.resolve(null); }
+  };
+  // One call for the integrator: find the number in `words` (meta.words of the finals since the student started),
+  // re-listen to it, and pick with bestNumber(). Resolves { phone, cwid, source, agree, valid, recheck } or null.
+  // Runs the 3 recheck passes that tested best together (nova-3 en, nova-3 multi, nova-2 en) in parallel and resolves
+  // as soon as two sources (stream included) agree on a valid number — usually after the fast 'en' pass (~0.4 s) —
+  // else when all passes are back (~1.2 s). opts: { field, lang (stream language; 'es' adds a Spanish pass),
+  // passes: [recheck opts...], parse, ignoreNames, timeoutMs }.
+  Deepgram.prototype.checkNumber = function (streamText, words, opts) {
+    var self = this, sp = numberSpan(words);
+    opts = opts || {};
+    if (!sp) return Promise.resolve(null);
+    var passes = opts.passes || (opts.lang && !/^en/.test(opts.lang)
+      ? [{ language: 'multi' }, { language: opts.lang.slice(0, 2) }, { language: 'en' }]
+      : [{ language: 'en' }, { language: 'multi' }, { language: 'en', model: 'nova-2' }]);
+    var results = passes.map(function () { return undefined; }), left = passes.length, done = false;
+    var bo = { field: opts.field, parse: opts.parse, ignoreNames: opts.ignoreNames };
+    return new Promise(function (resolve) {
+      function decide(final) {
+        if (done) return;
+        var texts = results.filter(function (r) { return r; }).map(function (r) { return r.transcript; });
+        var b = bestNumber(streamText, texts, bo);
+        if (final || (b.source === 'vote' && b.valid)) {
+          done = true; b.span = sp; b.rechecks = results.slice(); b.passes = texts.length;
+          resolve(texts.length || final ? b : null);
+        }
+      }
+      passes.forEach(function (p, i) {
+        self.recheck(sp.from, sp.to, Object.assign({ timeoutMs: opts.timeoutMs, keyterms: opts.keyterms }, p)).then(function (r) {
+          results[i] = r; left--; decide(left === 0);
+        });
+      });
+    });
+  };
+  Deepgram.prototype.setBoost = function (x) { this.boost = x; this.fe.setManual(x); };
+  Deepgram.prototype.setAutoGain = function (on) { this.fe.setAuto(on); };
+  Deepgram.prototype.getGain = function () { return this.fe.gain(); };
+  Deepgram.prototype.isNoisy = function () { return !!this.vp; };
   Deepgram.prototype.stop = function () {
     this.running = false; clearInterval(this.ka);
     try { if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify({ type: 'CloseStream' })); } catch (e) {}
     try { this.ws && this.ws.close(); } catch (e) {}
+    try { this.src && this.src.disconnect(); } catch (e) {}
     (this.nodes || []).forEach(function (n) { try { n.disconnect(); } catch (e) {} });
     if (this.stream) this.stream.getTracks().forEach(function (t) { t.stop(); });
     if (this.ctx) this.ctx.close().catch(function () {});
-    this.ws = this.stream = this.ctx = null;
+    this.ws = this.stream = this.ctx = this.src = null;
   };
   // Throw away the in-flight utterance (new student / field mic).
   Deepgram.prototype.flush = function () {};
 
   // ---------------- Apple (Safari) ----------------
   function Apple(o) { this.o = o; this.running = false; }
-  Apple.supported = function () { return !!(window.SpeechRecognition || window.webkitSpeechRecognition); };
+  Apple.supported = function () { return !!(typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition)); };
   Apple.prototype.start = function () {
-    var self = this, SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { self.o.onStatus('Speech recognition is not available here — open the page in Safari.', true); return Promise.reject(new Error('no SR')); }
+    var self = this, SR2 = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR2) { self.o.onStatus('Speech recognition is not available here — open the page in Safari.', true); return Promise.reject(new Error('no SR')); }
     var isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-    var r = self.rec = new SR();
+    var r = self.rec = new SR2();
     r.lang = self.o.appleLang || 'en-US'; r.interimResults = true; r.maxAlternatives = 1;
     r.continuous = !isIOS; // iOS repeats phrases in continuous mode; restart per utterance instead
     var session = '';
@@ -806,14 +1195,27 @@ var QSpeech = (function () {
     return Promise.resolve();
   };
   Apple.prototype.setBoost = function () {};
+  Apple.prototype.setAutoGain = function () {};
+  Apple.prototype.getGain = function () { return 1; };
+  Apple.prototype.isNoisy = function () { return false; };
+  Apple.prototype.recheck = function () { return Promise.resolve(null); };
+  Apple.prototype.checkNumber = function () { return Promise.resolve(null); };
   Apple.prototype.stop = function () { this.running = false; try { this.rec && this.rec.abort(); } catch (e) {} };
   Apple.prototype.flush = function () { try { this.rec && this.rec.abort(); } catch (e) {} };
 
   return {
     create: function (engine, o) { return engine === 'deepgram' ? new Deepgram(o) : new Apple(o); },
-    appleSupported: Apple.supported
+    appleSupported: Apple.supported,
+    numberSpan: numberSpan,
+    bestNumber: bestNumber,
+    // internals shared with test/speech/eval.js
+    _dsp: { FrontEnd: FrontEnd, Gate: Gate, SentBuffer: SentBuffer, wav: wav, SR: SR },
+    _streamParams: streamParams,
+    _recheckParams: recheckParams,
+    _recheckRequest: recheckRequest
   };
 })();
+if (typeof module !== 'undefined') module.exports = QSpeech;
 
 </script>
 <script>
@@ -821,7 +1223,7 @@ var QSpeech = (function () {
  * kb.json (private) is published only as AES-GCM ciphertext (kb.enc); the key lives on the PC + phone. */
 var QKB = (function () {
   'use strict';
-  var kb = null, index = [];
+  var kb = null, index = [], byEmail = {}, quick = [];
 
   function unb64u(str) {
     str = str.replace(/-/g, '+').replace(/_/g, '/');
@@ -886,7 +1288,15 @@ var QKB = (function () {
     (kb.cards || []).forEach(function (c) {
       index.push({ card: c, triggers: (c.triggers || []).map(function (t) { return norm(t); }) });
     });
+    var dir = {};
+    (kb.directory || []).forEach(function (d) { dir[d.name.toLowerCase()] = d; if (d.email) byEmail[d.email.toLowerCase()] = d; });
+    (kb.directory || []).forEach(function (d) {
+      if ((kb.staff || []).some(function (p) { return p.name.toLowerCase() === d.name.toLowerCase(); })) return;
+      kb.staff = (kb.staff || []).concat([{ name: d.name, title: d.title }]);
+    });
     (kb.staff || []).forEach(function (p) {
+      var dd = dir[p.name.toLowerCase()];
+      if (dd) { p = { name: p.name, title: dd.title || p.title, where: dd.room, phone: dd.ext ? 'ext ' + dd.ext : '', email: dd.email }; }
       var n = norm(p.name);
       if (n.trim().split(' ').length < 2) return; // full names only, to avoid false hits
       index.push({
@@ -894,6 +1304,7 @@ var QKB = (function () {
         triggers: [n]
       });
     });
+    if (quick.length) setQuick(quick);
     return kb;
   }
 
@@ -971,8 +1382,48 @@ var QKB = (function () {
     return out.slice(0, max || 6).map(function (x) { return x.card.kind === 'place' && /^room:/.test(x.card.id) ? x.card : render(x.card); });
   }
 
+  // Quick facts typed in on the PC panel ("Guest Wi-Fi :: The code this week is ... :: wifi, internet, password").
+  function setQuick(list) {
+    index = index.filter(function (e) { return !/^quick:/.test(e.card.id); });
+    quick = (list || []).filter(function (q) { return q && q.title; });
+    quick.forEach(function (q, i) {
+      var trig = (q.triggers || []).map(function (t) { return norm(t); }).filter(function (t) { return t.trim(); });
+      if (!trig.length) trig = [norm(q.title)];
+      index.push({ card: { id: 'quick:' + i, kind: 'tip', title: q.title, say: q.say || '', facts: [], priority: 2 }, triggers: trig });
+    });
+  }
+  function parseQuick(text) { // one per line: Title :: what to say :: trigger, words
+    return String(text || '').split(/\n/).map(function (l) {
+      var p = l.split('::').map(function (x) { return x.trim(); });
+      return p[0] ? { title: p[0], say: p[1] || '', triggers: (p[2] || '').split(',').map(function (x) { return x.trim(); }).filter(Boolean) } : null;
+    }).filter(Boolean);
+  }
+  // Schedule: who is on what right now.
+  function hm(t) { var x = t.split(':'); return Number(x[0]) * 60 + Number(x[1]); }
+  function fmt12(t) { var m = hm(t), h = Math.floor(m / 60), mm = m % 60; return (h % 12 || 12) + (mm ? ':' + String(mm).padStart(2, '0') : '') + (h < 12 ? 'am' : 'pm'); }
+  function scheduleFor(date) {
+    if (!kb || !kb.schedule) return null;
+    var d = date || new Date(), iso = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    var day = kb.schedule.days && kb.schedule.days[iso];
+    if (!day && kb.schedule.weekly) day = kb.schedule.weekly[['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()]];
+    if (!day) return null;
+    var now = d.getHours() * 60 + d.getMinutes();
+    return (day.people || []).map(function (p) {
+      var cur = null, next = null;
+      (p.blocks || []).forEach(function (b) {
+        if (hm(b[0]) <= now && now < hm(b[1])) cur = b;
+        else if (hm(b[0]) > now && (!next || hm(b[0]) < hm(next[0]))) next = b;
+      });
+      var dd = byEmail && kb.directory && kb.directory.filter(function (x) { return x.name.toLowerCase() === p.name.toLowerCase(); })[0];
+      return { name: p.name, short: p.short || p.name.split(' ')[0], role: p.role, now: cur ? cur[2] : (next ? 'Not in yet' : 'Gone for the day'),
+        until: cur ? fmt12(cur[1]) : '', next: next ? next[2] + ' at ' + fmt12(next[0]) : '', ext: dd ? dd.ext : '', email: dd ? dd.email : '' };
+    });
+  }
+  function dirFor(email) { return byEmail[String(email || '').toLowerCase()] || null; }
+
   return {
-    search: search, fixHeard: fixHeard,
+    search: search, fixHeard: fixHeard, setQuick: setQuick, parseQuick: parseQuick, scheduleFor: scheduleFor, dirFor: dirFor,
+    directory: function () { return (kb && kb.directory) || []; },
     decrypt: decrypt, load: load, match: match, byId: byId, upcoming: upcoming, fmtDate: fmtDate,
     keyterms: function () { return (kb && kb.keyterms) || []; },
     loaded: function () { return !!kb; },
@@ -1013,14 +1464,19 @@ var QKB = (function () {
   // ---------- state ----------
   var pc = null, pcOnline = false, brokers = 0, cfg = store.get('cfg', {});
   var form, manual, committed, session, focus, pendingAdd, lastSynced, autoCancelled, studentStart, lastTipSig;
+  // Second listen (QSpeech.checkNumber): words = Deepgram words of this student's finals, numSrc[k] = where the phone /
+  // CWID came from ('stream' | 'recheck' | 'vote' | 'typed' | 'confirmed'), heard[k] = stream reading when it was checked.
+  var words = [], wordsEpoch = null, checkedSpan = '', heard = {}, numSrc = {}, checkSeq = 0;
   var settings = {
     autoAdd: store.get('autoAdd', true), engine: store.get('engine', 'deepgram'), language: store.get('language', 'multi'),
-    boost: store.get('boost', 3), skipSilence: store.get('skipSilence', true), countdown: store.get('countdown', 1), noisy: store.get('noisy', false)
+    boost: store.get('boost', 3), skipSilence: store.get('skipSilence', true), countdown: store.get('countdown', 1), noisy: store.get('noisy', false),
+    kpAuto: store.get('kpAuto', true), kpFlip: store.get('kpFlip', true), autoGain: store.get('autoGain', true)
   };
   function reset() {
     form = { queueId: null, serviceId: null, phone: '', name: '', cwid: '', note: '', noteAuto: false };
     awaitingReason = false;
     manual = {}; committed = ''; session = ''; focus = null; pendingAdd = null; lastSynced = ''; autoCancelled = false;
+    words = []; checkedSpan = ''; heard = {}; numSrc = {}; checkSeq++;
     studentStart = Date.now(); lastTipSig = '';
   }
   reset();
@@ -1045,11 +1501,13 @@ var QKB = (function () {
     if (m.t === 'state') onPcState(m);
     else if (m.t === 'config') onConfig(m);
     else if (m.t === 'cancel-auto') cancelAuto(true);
+    else if (m.t === 'tr') showTranslation(m);
   }
   function onConfig(m) {
     var changed = m.dgKey !== cfg.dgKey || m.kbKey !== cfg.kbKey;
-    cfg = { dgKey: m.dgKey || cfg.dgKey || '', kbKey: m.kbKey || cfg.kbKey || '', ignoreNames: m.ignoreNames || [] };
+    cfg = { dgKey: m.dgKey || cfg.dgKey || '', kbKey: m.kbKey || cfg.kbKey || '', ignoreNames: m.ignoreNames || [], quick: m.quick || [] };
     store.set('cfg', cfg);
+    if (QKB.setQuick) QKB.setQuick(cfg.quick);
     if (changed || !QKB.loaded()) loadKb();
     if (changed && listening) restartEngine();
     renderEngineInfo();
@@ -1074,7 +1532,7 @@ var QKB = (function () {
     if (!cfg.kbKey) return;
     fetch('kb.enc', { cache: 'no-cache' }).then(function (r) { return r.text(); })
       .then(function (t) { return QKB.decrypt(t, cfg.kbKey); })
-      .then(function (data) { QKB.load(data); renderTips(); })
+      .then(function (data) { QKB.load(data); if (QKB.setQuick) QKB.setQuick(cfg.quick || []); renderTips(); })
       .catch(function () { hint('Could not unlock the knowledge base (re-pair from the PC).', true); });
   }
   if (cfg.kbKey) loadKb();
@@ -1088,12 +1546,13 @@ var QKB = (function () {
   function wantedEngine() { return settings.engine === 'deepgram' && cfg.dgKey ? 'deepgram' : 'apple'; }
   function makeEngine(kind) {
     return QSpeech.create(kind, {
-      key: cfg.dgKey, language: settings.language, boost: settings.boost, skipSilence: settings.skipSilence, noisy: settings.noisy,
+      key: cfg.dgKey, language: settings.language, boost: settings.boost, autoGain: settings.autoGain, skipSilence: settings.skipSilence, noisy: settings.noisy,
+      onNoise: function (on) { hint(on ? 'Very noisy here — noise filter on.' : 'Quieter now — noise filter off.'); },
       keyterms: QKB.keyterms().length ? QKB.keyterms() : ['Collin', 'CWID', 'FAFSA', 'TASFA', 'Hazlewood', 'TSI', 'Workday', 'Qless', 'Wylie', 'transcript', 'advising', 'degree plan'],
       appleLang: settings.language === 'multi' ? (navigator.language || 'en-US') : 'en-US',
       onText: onSpeech,
       onLevel: renderLevel,
-      onLang: function (code) { var l = LANGS[code] || code; $('#lang').textContent = code && code !== 'en' ? '🌐 ' + l : ''; sendLive(code); },
+      onLang: function (code) { curLang = code || curLang; var l = LANGS[code] || code; $('#lang').textContent = code && code !== 'en' ? '🌐 ' + l : ''; sendLive(code); },
       onStatus: function (msg, err) { hint(msg, err); },
       onFatal: function () { usingEngine = 'apple'; startEngine('apple'); }
     });
@@ -1119,7 +1578,8 @@ var QKB = (function () {
   }
 
   var REASON_Q = /(reason for (?:your|the|today'?s|this) visit|what brings you|how can i help|how may i help|what can i (?:help|do for) you|what do you need(?: help with)?|what are you (?:here|in) for|what(?:'s| is) (?:this|it) (?:regarding|about|for)|what are you coming in for|en qu[eé] (?:le|te|les) puedo ayudar)/i;
-  var awaitingReason = false;
+  var awaitingReason = false, segs = [], curLang = '';
+  var PHONE_Q = /(what(?:'s| is) (?:your|the best|a good) (?:phone|cell|cell ?phone|contact)?\s*number|can i (?:get|have) (?:your|a) (?:phone |cell )?number|(?:your|the) (?:phone|cell) number|n[uú]mero de (?:tel[eé]fono|celular)|cu[aá]l es su n[uú]mero)/i;
   function cleanReason(t) {
     t = t.replace(/^[\s,.]*(?:(?:um+|uh+|so|yeah|yes|okay|ok|well|hi|hello|hey|oh)[\s,.]+)*/i, '')
       .replace(/^(?:i (?:need|want|wanted|would like|'d like|was wondering|have a question about|had a question about|have to|gotta)(?: to| if i could| about)? |i(?:'m| am) (?:trying to |here (?:to |for |about )?|just here (?:to |for )?)|i'?d like to |can i |could i |it'?s (?:about |for )?)/i, '')
@@ -1134,12 +1594,19 @@ var QKB = (function () {
     return c && c.kind === 'tip' ? c.title.split(/ \/ | - | \(/)[0].trim() : '';
   }
 
-  function onSpeech(text, isFinal) {
+  function onSpeech(text, isFinal, speechFinal, meta) {
+    if (isFinal && meta && meta.words) {
+      if (meta.epoch !== wordsEpoch) { words = []; wordsEpoch = meta.epoch; checkedSpan = ''; }
+      words = words.concat(meta.words).slice(-300);
+    }
+    if (isFinal && speechFinal) setTimeout(recheckNumber, 0);
     if (!isFinal) { session = text; onTranscript(); return; }
     var seg = (text || session).trim();
     session = '';
     if (seg) {
       committed += seg + ' ';
+      segs.push({ t: seg, lang: curLang || 'en' }); if (segs.length > 8) segs.shift();
+      if (PHONE_Q.test(seg) && settings.kpAuto && form.phone.length !== 10) openKeypad();
       var cmd = QParse.command(seg);
       if (cmd === 'next') { nextStudent(true); return; }
       if (cmd === 'cancel' && autoTimer) cancelAuto(false);
@@ -1157,6 +1624,50 @@ var QKB = (function () {
     onTranscript();
   }
 
+  var NUM_OK = { phone: function (v) { return /^[2-9]\d{2}[2-9]\d{6}$/.test(v || ''); }, cwid: function (v) { return /^\d{9}$/.test(v || ''); } };
+  function recheckNumber() {
+    if (!engine || !engine.checkNumber || usingEngine !== 'deepgram' || !QSpeech.numberSpan) return;
+    // every number said since the last check ("my number is ... and my ID is ..."), newest first
+    var w = words, seq = checkSeq, n = 0, sp;
+    while (n < 3 && (sp = QSpeech.numberSpan(w))) {
+      var key = sp.from.toFixed(2) + '-' + sp.to.toFixed(2);
+      if (checkedSpan.indexOf('|' + key) >= 0) break;
+      checkedSpan += '|' + key;
+      var field = !n && focus && /phone|cwid/.test(focus.field) ? focus.field : sp.digits === 9 ? 'cwid' : 'phone';
+      if (!n) hint(field === 'phone' ? 'Double-checking the number…' : 'Double-checking the ID…');
+      (function (field, upTo) {
+        engine.checkNumber(committed + session, upTo, { field: field, lang: curLang || 'en', parse: QParse, ignoreNames: cfg.ignoreNames })
+          .then(function (r) { if (seq === checkSeq) applyCheck(field, r); }, function () {});
+      })(field, w);
+      var from = sp.from;
+      w = w.filter(function (x) { return x.end <= from; });
+      n++;
+    }
+  }
+  function applyCheck(field, r) {
+    if (r) {
+      var ex = QParse.extract(committed + session, { ignoreNames: cfg.ignoreNames });
+      ['phone', 'cwid'].forEach(function (f) {
+        var v = r[f], src = r[f + 'Source'];
+        if (!v || (src !== 'vote' && src !== 'recheck') || !NUM_OK[f](v) || /^(typed|confirmed)$/.test(numSrc[f] || '')) return;
+        form[f] = v; numSrc[f] = src; heard[f] = ex[f] || null;
+      });
+    }
+    var src = numSrc[field], label = field === 'phone' ? 'number' : 'ID';
+    if (/^(typed|confirmed)$/.test(src || '')) { /* the student typed it: nothing to say */ }
+    else if (src === 'vote') hint('✓ ' + label.charAt(0).toUpperCase() + label.slice(1) + ' double-checked.');
+    else if (!NUM_OK[field](form[field])) {
+      hint('Didn\'t catch the whole ' + label + ' — ask them to repeat it' + (field === 'phone' ? ' or use the keypad.' : '.'), true);
+      if (field === 'phone' && settings.kpAuto) openKeypad();
+    } else {
+      hint('Not sure about the ' + label + ' — check it with the student, then tap Add.', true);
+      if (field === 'phone' && settings.kpAuto) openKeypad(); // "Is this your number? ✓ Yes"
+    }
+    renderFields(); renderAdd(); scheduleSync(); sendLive();
+    if (!$('#keypad').hidden && !kpDigits) renderKeypad();
+  }
+  function trusted(k) { return usingEngine !== 'deepgram' || /^(typed|confirmed|vote)$/.test(numSrc[k] || ''); }
+
   function onTranscript() {
     var text = committed + session;
     renderTranscript();
@@ -1164,7 +1675,8 @@ var QKB = (function () {
       var val = QParse.parseField(focus.field, text.slice(focus.from));
       if (val) {
         if (focus.field === 'phone') val = val.slice(0, 10);
-        form[focus.field] = val; manual[focus.field] = true; focus.got = true;
+        if (heard[focus.field] !== val) { form[focus.field] = val; if (NUM_OK[focus.field]) numSrc[focus.field] = 'stream'; }
+        manual[focus.field] = true; focus.got = true;
         if (focus.field === 'phone' && val.length === 10) { focus = null; hint('Got the number.'); }
       }
     }
@@ -1173,7 +1685,11 @@ var QKB = (function () {
       if (tn) { form.note = tn; form.noteAuto = true; }
     }
     var ex = QParse.extract(text, { ignoreNames: cfg.ignoreNames });
-    ['phone', 'name', 'cwid'].forEach(function (k) { if (ex[k] && !manual[k]) form[k] = ex[k]; });
+    ['phone', 'name', 'cwid'].forEach(function (k) {
+      if (!ex[k] || manual[k]) return;
+      if (heard[k] != null && ex[k] === heard[k]) return; // keep the double-checked value
+      if (form[k] !== ex[k]) { form[k] = ex[k]; if (k !== 'name') { numSrc[k] = 'stream'; delete heard[k]; } }
+    });
     if (pc && !manual.queueId) {
       var c = QParse.classify(text, pc.queues);
       if (c.queueId != null) {
@@ -1183,6 +1699,7 @@ var QKB = (function () {
       }
     }
     renderFields(); renderTips(); renderAdd(); scheduleSync(); sendLive();
+    if (!$('#keypad').hidden && !kpDigits) renderKeypad();
   }
 
   // ---------- sync with PC ----------
@@ -1212,7 +1729,8 @@ var QKB = (function () {
       var sig = text + '|' + tips.join(',') + '|' + lastLang + '|' + (autoTimer ? autoLeft : '');
       if (sig === lastLive || !pcOnline) return;
       lastLive = sig;
-      relay.send({ t: 'live', text: text, tips: tips, lang: lastLang, countdown: autoTimer ? autoLeft : null, fields: payload() });
+      relay.send({ t: 'live', text: text, tips: tips, lang: lastLang, countdown: autoTimer ? autoLeft : null, fields: payload(),
+        segs: segs.slice(-4).concat(session.trim() ? [{ t: session.trim(), lang: curLang || 'en', interim: true }] : []) });
     }, 250);
   }
   function lookupFor() { return pc && pc.lookup && pc.lookup.phone === form.phone ? pc.lookup : null; }
@@ -1226,7 +1744,8 @@ var QKB = (function () {
   function readyForAuto() {
     var lk = lookupFor();
     return canAdd() && knownName() && (form.serviceId != null || queueServices().length < 2) && lk && (form.cwid || lk.cwid) &&
-      form.note && !awaitingReason && !autoCancelled && (!pc || pc.autoAdd !== false);
+      form.note && !awaitingReason && !autoCancelled && (!pc || pc.autoAdd !== false) &&
+      trusted('phone') && (!form.cwid || trusted('cwid'));
   }
   function sendAdd(auto) {
     clearInterval(autoTimer); autoTimer = null;
@@ -1259,7 +1778,62 @@ var QKB = (function () {
     hint(fromPc ? 'Auto-add stopped from the PC.' : 'Auto-add stopped. Tap Add when ready.');
   }
 
+  var trList = [];
+  function showTranslation(m) {
+    if (!segs.some(function (s) { return s.t === m.src; })) return; // from a previous student
+    trList.push(m); if (trList.length > 3) trList.shift();
+    var box = $('#trBox'); box.innerHTML = '';
+    trList.forEach(function (x) {
+      var d = document.createElement('div'), sm = document.createElement('small');
+      sm.textContent = (LANGS[x.lang] || x.lang) + ': ' + x.src; d.appendChild(sm); d.appendChild(document.createTextNode('🇺🇸 ' + x.en)); box.appendChild(d);
+    });
+  }
+
+  // ---------- keypad: the student types (or confirms) their own number ----------
+  var kpDigits = '', kpTimer = null;
+  function kpFmt(d) { var x = (d + '__________').slice(0, 10); return x.slice(0, 3) + '-' + x.slice(3, 6) + '-' + x.slice(6); }
+  function openKeypad() {
+    kpDigits = '';
+    $('#keypad').hidden = false; $('#keypad').className = settings.kpFlip ? 'flip' : '';
+    renderKeypad();
+    clearTimeout(kpTimer); kpTimer = setTimeout(closeKeypad, 60000);
+  }
+  function closeKeypad() { clearTimeout(kpTimer); $('#keypad').hidden = true; }
+  function kpUse(d, how) {
+    form.phone = d; manual.phone = true; autoCancelled = false; numSrc.phone = how; heard.phone = null;
+    $('#kpInner').innerHTML = '<div class="kp-done">✅ Thank you! · ¡Gracias!</div>';
+    renderFields(); renderAdd(); scheduleSync();
+    setTimeout(closeKeypad, 1200);
+  }
+  function renderKeypad() {
+    if ($('#keypad').hidden) return;
+    var heard = form.phone.length === 10 && !kpDigits ? form.phone : '';
+    var h = '<div class="kp-title">Tap your phone number<span>Escriba su número de celular</span></div>';
+    if (heard) h += '<div class="kp-heard">Is this your number? · ¿Es su número?<b>' + QParse.formatPhone(heard) + '</b><button type="button" id="kpYes">✓ Yes · Sí</button></div>';
+    h += '<div class="kp-num">' + kpFmt(kpDigits) + '</div><div class="kp-grid">';
+    ['1', '2', '3', '4', '5', '6', '7', '8', '9', '⌫', '0', '✓'].forEach(function (k) {
+      h += '<button type="button" data-k="' + k + '"' + (k === '✓' ? ' class="ok"' + (kpDigits.length === 10 ? '' : ' disabled') : '') + '>' + k + '</button>';
+    });
+    $('#kpInner').innerHTML = h + '</div>';
+    var yes = $('#kpYes'); if (yes) yes.onclick = function () { kpUse(heard, 'confirmed'); };
+    $('#kpInner').querySelectorAll('[data-k]').forEach(function (b) {
+      b.onclick = function () {
+        clearTimeout(kpTimer); kpTimer = setTimeout(closeKeypad, 60000);
+        var k = b.dataset.k;
+        if (k === '⌫') kpDigits = kpDigits.slice(0, -1);
+        else if (k === '✓') { if (kpDigits.length === 10) return kpUse(kpDigits, 'typed'); }
+        else if (kpDigits.length < 10) kpDigits += k;
+        if (navigator.vibrate) navigator.vibrate(10);
+        if (kpDigits.length === 10) return kpUse(kpDigits, 'typed');
+        renderKeypad();
+      };
+    });
+  }
+  $('#kpOpen').onclick = openKeypad;
+  $('#kpClose').onclick = closeKeypad;
+
   function nextStudent(closePc) {
+    closeKeypad(); segs = []; trList = []; $('#trBox').innerHTML = '';
     clearInterval(autoTimer); autoTimer = null;
     if (closePc && pcOnline) relay.send({ t: 'cancel' });
     reset();
@@ -1286,10 +1860,14 @@ var QKB = (function () {
     });
   }
   function renderMic() { $('#mic').className = listening ? 'on' : ''; $('#mic').textContent = listening ? '■' : '🎙'; }
-  function renderLevel(level, speaking) {
+  var gainShownAt = 0;
+  function renderLevel(level, speaking, info) {
     var pct = Math.min(100, Math.round(Math.sqrt(level) * 260));
     $('#meter i').style.width = pct + '%';
-    $('#meter').className = pct > 92 ? 'loud' : '';
+    $('#meter').className = (info ? info.clipping : pct > 92) ? 'loud' : '';
+    if (info && settings.autoGain && Date.now() - gainShownAt > 500) {
+      gainShownAt = Date.now(); $('#boostVal').textContent = 'auto ' + info.gain.toFixed(1) + '×';
+    }
     $('#mic').style.boxShadow = listening && speaking ? '0 0 0 ' + Math.round(4 + pct / 7) + 'px rgba(229,72,77,.25)' : 'none';
   }
   function renderTranscript() {
@@ -1369,7 +1947,9 @@ var QKB = (function () {
     var el = $('#f-' + k);
     if (document.activeElement !== el) el.value = v || '';
     if (ph) el.placeholder = ph;
-    el.classList.toggle('auto', !!v && !manual[k]);
+    var ok = !!v && /^(vote|confirmed)$/.test(numSrc[k] || '');
+    el.classList.toggle('ok', ok);
+    el.classList.toggle('auto', !!v && !manual[k] && !ok);
   }
   function renderAdd() {
     var b = $('#add');
@@ -1405,7 +1985,7 @@ var QKB = (function () {
   ['phone', 'name', 'cwid', 'note'].forEach(function (k) {
     $('#f-' + k).addEventListener('input', function (e) {
       form[k] = k === 'phone' ? digits(e.target.value).slice(-10) : e.target.value;
-      manual[k] = true; autoCancelled = false;
+      manual[k] = true; autoCancelled = false; if (k === 'phone' || k === 'cwid') numSrc[k] = 'typed';
       if (k === 'phone' && form.phone.length === 10) { e.target.value = QParse.formatPhone(form.phone); }
       renderAdd(); scheduleSync();
       if (k === 'phone') renderFields();
@@ -1420,8 +2000,9 @@ var QKB = (function () {
   $('#next').onclick = function () { nextStudent(true); };
   $('#settingsBtn').onclick = function () {
     $('#autoAdd').checked = settings.autoAdd; $('#countdown').value = String(settings.countdown); $('#engine').value = settings.engine; $('#language').value = settings.language;
-    $('#boost').value = settings.boost; $('#boostVal').textContent = settings.boost + '×'; $('#skipSilence').checked = settings.skipSilence;
-    $('#dgKey').value = cfg.dgKey || ''; $('#noisy').checked = settings.noisy; renderEngineInfo();
+    $('#boost').value = settings.boost; $('#boostVal').textContent = settings.autoGain ? 'auto' : settings.boost + '×'; $('#skipSilence').checked = settings.skipSilence;
+    $('#autoGain').checked = settings.autoGain;
+    $('#dgKey').value = cfg.dgKey || ''; $('#noisy').checked = settings.noisy; $('#kpAuto').checked = settings.kpAuto; $('#kpFlip').checked = settings.kpFlip; renderEngineInfo();
     $('#settings').showModal();
   };
   $('#closeSettings').onclick = function () { $('#settings').close(); };
@@ -1432,7 +2013,17 @@ var QKB = (function () {
   $('#language').onchange = function (e) { setSetting('language', e.target.value, true); };
   $('#skipSilence').onchange = function (e) { setSetting('skipSilence', e.target.checked, true); };
   $('#noisy').onchange = function (e) { setSetting('noisy', e.target.checked, true); };
-  $('#boost').oninput = function (e) { var v = Number(e.target.value); setSetting('boost', v); $('#boostVal').textContent = v + '×'; if (engine) engine.setBoost(v); };
+  $('#kpAuto').onchange = function (e) { setSetting('kpAuto', e.target.checked); };
+  $('#kpFlip').onchange = function (e) { setSetting('kpFlip', e.target.checked); };
+  $('#boost').oninput = function (e) {
+    var v = Number(e.target.value); setSetting('boost', v); setSetting('autoGain', false); $('#autoGain').checked = false;
+    $('#boostVal').textContent = v + '×'; if (engine) engine.setBoost(v);
+  };
+  $('#autoGain').onchange = function (e) {
+    setSetting('autoGain', e.target.checked);
+    if (engine) { if (e.target.checked) engine.setAutoGain(true); else engine.setBoost(settings.boost); }
+    $('#boostVal').textContent = e.target.checked ? 'auto' : settings.boost + '×';
+  };
   $('#dgKey').onchange = function (e) { cfg.dgKey = e.target.value.trim(); store.set('cfg', cfg); restartEngine(); renderEngineInfo(); };
   $('#unpair').onclick = function () { store.set('pairing', null); relay.close(); location.hash = ''; location.reload(); };
 
