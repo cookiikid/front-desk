@@ -1,0 +1,897 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Front Desk">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#f4f5f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#16181c" media="(prefers-color-scheme: dark)">
+<title>Front Desk Remote</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #ffffff; --text: #1d1f23; --muted: #6b7280; --line: #e3e5e9;
+    --accent: #1a9ad6; --accent-ink: #ffffff; --ok: #1f9d4c; --warn: #c27c0e; --bad: #d13b3b;
+    --chip: #eef1f4; --field: #f7f8fa; --listen: #e5484d;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181c; --card: #22252b; --text: #eceef1; --muted: #9aa1ab; --line: #33373e;
+      --accent: #2aa7e3; --chip: #2c3037; --field: #1b1e23; color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; }
+  body { padding: env(safe-area-inset-top) 14px calc(96px + env(safe-area-inset-bottom)); }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 10px 2px 8px; }
+  header h1 { font-size: 19px; margin: 0; font-weight: 700; }
+  .status { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #9aa1ab; }
+  .dot.on { background: var(--ok); } .dot.half { background: var(--warn); }
+  .iconbtn { background: none; border: 0; color: var(--muted); font-size: 22px; padding: 4px 6px; }
+  .queues { display: flex; gap: 8px; margin-bottom: 10px; }
+  .qstat { flex: 1; background: var(--card); border-radius: 10px; padding: 7px 10px; font-size: 12px; color: var(--muted); border: 1px solid var(--line); }
+  .qstat b { display: block; color: var(--text); font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card { background: var(--card); border-radius: 14px; padding: 12px; margin-bottom: 12px; border: 1px solid var(--line); }
+  .microw { display: flex; gap: 12px; align-items: stretch; }
+  #mic { flex: 0 0 88px; height: 88px; border-radius: 50%; border: 0; background: var(--accent); color: var(--accent-ink); font-size: 34px; position: relative; }
+  #mic.on { background: var(--listen); animation: pulse 1.4s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(229,72,77,.5); } 70% { box-shadow: 0 0 0 16px rgba(229,72,77,0); } 100% { box-shadow: 0 0 0 0 rgba(229,72,77,0); } }
+  #transcript { flex: 1; min-height: 88px; max-height: 140px; width: 100%; resize: none; border: 1px solid var(--line); border-radius: 10px; background: var(--field); color: var(--text); padding: 8px 10px; font: 15px/1.35 inherit; font-family: inherit; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 6px; min-height: 16px; }
+  .hint.err { color: var(--bad); }
+  label.lbl { display: block; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin: 10px 0 6px; }
+  label.lbl:first-child { margin-top: 0; }
+  .seg { display: flex; gap: 6px; }
+  .seg button, .chip { border: 1px solid var(--line); background: var(--chip); color: var(--text); border-radius: 10px; font: inherit; }
+  .seg button { flex: 1; padding: 10px 6px; font-size: 14px; font-weight: 600; }
+  .seg button.sel, .chip.sel { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { padding: 7px 11px; font-size: 14px; }
+  .field { display: flex; gap: 6px; align-items: center; }
+  .field input { flex: 1; min-width: 0; font: inherit; font-size: 17px; padding: 10px 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--field); color: var(--text); }
+  .field input.auto { border-color: var(--accent); }
+  .field .fmic { flex: 0 0 44px; height: 44px; border-radius: 10px; border: 1px solid var(--line); background: var(--chip); font-size: 18px; }
+  .field .fmic.on { background: var(--listen); border-color: var(--listen); }
+  .from { font-size: 12px; color: var(--ok); margin-top: 4px; min-height: 0; }
+  #lookup { font-size: 14px; padding: 10px 12px; border-radius: 10px; background: var(--chip); margin-bottom: 12px; }
+  #lookup.known { background: rgba(31,157,76,.12); color: var(--ok); }
+  #lookup.new { background: rgba(194,124,14,.12); color: var(--warn); }
+  #lookup:empty { display: none; }
+  .bar { position: fixed; left: 0; right: 0; bottom: 0; padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); background: var(--bg); border-top: 1px solid var(--line); display: flex; gap: 10px; }
+  .bar button { border: 0; border-radius: 12px; font: inherit; font-weight: 700; padding: 15px 10px; }
+  #next { flex: 0 0 34%; background: var(--chip); color: var(--text); }
+  #add { flex: 1; background: var(--ok); color: #fff; font-size: 17px; }
+  #add:disabled { opacity: .45; }
+  #add.counting { background: var(--warn); }
+  #result { position: fixed; left: 14px; right: 14px; top: calc(env(safe-area-inset-top) + 10px); padding: 14px; border-radius: 12px; color: #fff; font-weight: 600; z-index: 10; }
+  #result.ok { background: var(--ok); } #result.bad { background: var(--bad); }
+  dialog { border: 0; border-radius: 16px; background: var(--card); color: var(--text); width: min(92vw, 420px); padding: 16px; }
+  dialog::backdrop { background: rgba(0,0,0,.4); }
+  dialog h2 { margin: 0 0 10px; font-size: 18px; }
+  dialog p, dialog li { font-size: 14px; color: var(--muted); }
+  .switch { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; font-size: 15px; }
+  .switch input { width: 22px; height: 22px; }
+  .btn { border: 0; border-radius: 10px; padding: 11px 14px; font: inherit; font-weight: 600; background: var(--accent); color: var(--accent-ink); }
+  .btn.grey { background: var(--chip); color: var(--text); }
+  #pairScreen { padding-top: 30px; text-align: center; }
+  #pairScreen textarea { width: 100%; height: 80px; margin: 10px 0; border-radius: 10px; border: 1px solid var(--line); background: var(--field); color: var(--text); padding: 8px; font: 14px ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<div id="pairScreen" hidden>
+  <h1 style="font-size:22px">Front Desk Remote</h1>
+  <p>On the Qless PC, click the <b>iPhone</b> pill (bottom-right) → <b>Show pairing QR</b>, then scan it with the iPhone Camera.</p>
+  <p style="color:var(--muted);font-size:14px">Or paste the pairing link here:</p>
+  <textarea id="pairInput" placeholder="https://…#p=…"></textarea>
+  <button class="btn" id="pairBtn">Pair</button>
+</div>
+
+<div id="app" hidden>
+  <header>
+    <div>
+      <h1>Front Desk</h1>
+      <div class="status"><span class="dot" id="dot"></span><span id="statusText">Connecting…</span></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:4px">
+      <span class="status" id="today"></span>
+      <button class="iconbtn" id="settingsBtn" aria-label="Settings">⚙︎</button>
+    </div>
+  </header>
+
+  <div class="queues" id="queues"></div>
+
+  <div class="card">
+    <div class="microw">
+      <button id="mic" aria-label="Listen">🎙</button>
+      <textarea id="transcript" placeholder="Tap the mic and talk with the student. Or type here / use the keyboard mic."></textarea>
+    </div>
+    <div class="hint" id="hint"></div>
+  </div>
+
+  <div id="lookup"></div>
+
+  <div class="card">
+    <label class="lbl">Queue</label>
+    <div class="seg" id="queueSeg"></div>
+    <label class="lbl">Type of service</label>
+    <div class="chips" id="services"><span class="hint">Waiting for the PC…</span></div>
+
+    <label class="lbl" for="f-phone">Cell phone</label>
+    <div class="field"><input id="f-phone" type="tel" inputmode="tel" autocomplete="off" placeholder="972-555-1234"><button class="fmic" data-field="phone" aria-label="Say phone number">🎤</button></div>
+
+    <label class="lbl" for="f-name">Name</label>
+    <div class="field"><input id="f-name" autocomplete="off" autocapitalize="words" placeholder="Filled by Qless if they've been here"><button class="fmic" data-field="name" aria-label="Say name">🎤</button></div>
+
+    <label class="lbl" for="f-cwid">CWID</label>
+    <div class="field"><input id="f-cwid" autocomplete="off" autocapitalize="none" placeholder="Student ID"><button class="fmic" data-field="cwid" aria-label="Say CWID">🎤</button></div>
+
+    <label class="lbl" for="f-note">Note</label>
+    <div class="field"><input id="f-note" autocomplete="off" placeholder="Optional"><button class="fmic" data-field="note" aria-label="Say note">🎤</button></div>
+  </div>
+
+  <div class="bar">
+    <button id="next">Next student</button>
+    <button id="add" disabled>Add to queue</button>
+  </div>
+  <div id="result" hidden></div>
+</div>
+
+<dialog id="settings">
+  <h2>Settings</h2>
+  <label class="switch">Hands-free: auto-add when everything's filled <input type="checkbox" id="autoAdd"></label>
+  <label class="switch">Auto-fill the PC as soon as a phone # is heard <input type="checkbox" id="autoFill"></label>
+  <h2 style="margin-top:14px">Mic tips</h2>
+  <ul>
+    <li>Lay the phone flat on the desk between you and the student, bottom edge (the mic) toward them.</li>
+    <li>Numbers are the hardest part. For best accuracy tap the 🎤 next to a field — it listens for just that one thing.</li>
+    <li>Ask them to say the number in chunks: "972… 555… 1234."</li>
+    <li>If speech stops working: Settings → General → Keyboard → <b>Enable Dictation</b>, and Settings → Apps → Safari → Microphone → <b>Allow</b>. The keyboard's own 🎤 also works in any box.</li>
+  </ul>
+  <div style="display:flex;gap:8px;justify-content:space-between;margin-top:12px">
+    <button class="btn grey" id="unpair">Unpair</button>
+    <button class="btn" id="closeSettings">Done</button>
+  </div>
+</dialog>
+
+<script>
+/* QRelay — tiny end-to-end encrypted pub/sub between the phone and the PC.
+ * Talks MQTT 3.1.1 over WebSocket to two free public brokers at once (redundancy),
+ * and AES-GCM encrypts every message with a key that only the phone + PC know,
+ * so the brokers only ever see random-looking ciphertext. */
+var QRelay = (function () {
+  'use strict';
+  var BROKERS = ['wss://broker.hivemq.com:8884/mqtt', 'wss://broker.emqx.io:8084/mqtt'];
+  var te = new TextEncoder(), td = new TextDecoder();
+
+  function b64u(bytes) {
+    var s = '';
+    for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  function unb64u(str) {
+    str = str.replace(/-/g, '+').replace(/_/g, '/');
+    while (str.length % 4) str += '=';
+    var s = atob(str), out = new Uint8Array(s.length);
+    for (var i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+    return out;
+  }
+  function rand(n) { return crypto.getRandomValues(new Uint8Array(n)); }
+  function newPairing() { return { topic: b64u(rand(12)), key: b64u(rand(32)) }; }
+  function encodePairing(p) { return p.topic + '.' + p.key; }
+  function decodePairing(s) {
+    var m = /^([A-Za-z0-9_-]{8,})\.([A-Za-z0-9_-]{43})$/.exec((s || '').trim());
+    return m ? { topic: m[1], key: m[2] } : null;
+  }
+
+  // ---------- minimal MQTT 3.1.1 packet codec ----------
+  function concat(arrs) {
+    var n = 0, i = 0;
+    arrs.forEach(function (a) { n += a.length; });
+    var o = new Uint8Array(n);
+    arrs.forEach(function (a) { o.set(a, i); i += a.length; });
+    return o;
+  }
+  function encStr(s) {
+    var b = typeof s === 'string' ? te.encode(s) : s;
+    return concat([new Uint8Array([b.length >> 8, b.length & 255]), b]);
+  }
+  function packet(type, body) {
+    var len = [], x = body.length;
+    do { var d = x % 128; x = Math.floor(x / 128); if (x > 0) d |= 128; len.push(d); } while (x > 0);
+    return concat([new Uint8Array([type]), new Uint8Array(len), body]);
+  }
+  function connectPkt(clientId, will) {
+    var flags = 0x02; // clean session
+    var parts = [encStr('MQTT'), new Uint8Array([4]), null, new Uint8Array([0, 30]), encStr(clientId)];
+    if (will) {
+      flags |= 0x04 | (will.retain ? 0x20 : 0);
+      parts.push(encStr(will.topic), encStr(will.payload));
+    }
+    parts[2] = new Uint8Array([flags]);
+    return packet(0x10, concat(parts));
+  }
+  function subscribePkt(id, topics) {
+    var parts = [new Uint8Array([id >> 8, id & 255])];
+    topics.forEach(function (t) { parts.push(encStr(t), new Uint8Array([0])); });
+    return packet(0x82, concat(parts));
+  }
+  function publishPkt(topic, payload, retain) {
+    return packet(0x30 | (retain ? 1 : 0), concat([encStr(topic), te.encode(payload)]));
+  }
+
+  // ---------- one broker connection with auto-reconnect ----------
+  function Conn(url, opts) {
+    this.url = url; this.opts = opts; this.ready = false; this.backoff = 1000;
+    this.buf = new Uint8Array(0); this.stopped = false;
+    this.open();
+  }
+  Conn.prototype.open = function () {
+    var self = this;
+    if (self.stopped) return;
+    var ws;
+    try { ws = new WebSocket(self.url, 'mqtt'); } catch (e) { return self.retry(); }
+    self.ws = ws; ws.binaryType = 'arraybuffer';
+    ws.onopen = function () {
+      self.buf = new Uint8Array(0);
+      ws.send(connectPkt('qfd' + b64u(rand(9)), self.opts.will));
+    };
+    ws.onmessage = function (ev) { self.feed(new Uint8Array(ev.data)); };
+    ws.onclose = function () { self.setReady(false); clearInterval(self.ping); self.retry(); };
+    ws.onerror = function () { try { ws.close(); } catch (e) {} };
+  };
+  Conn.prototype.retry = function () {
+    var self = this;
+    if (self.stopped || self.retryTimer) return;
+    self.retryTimer = setTimeout(function () { self.retryTimer = null; self.open(); }, self.backoff);
+    self.backoff = Math.min(self.backoff * 2, 15000);
+  };
+  Conn.prototype.setReady = function (r) {
+    if (this.ready !== r) { this.ready = r; this.opts.onReady(); }
+  };
+  Conn.prototype.feed = function (chunk) {
+    this.buf = concat([this.buf, chunk]);
+    for (;;) {
+      var b = this.buf;
+      if (b.length < 2) return;
+      var mult = 1, len = 0, i = 1, d;
+      do {
+        if (i >= b.length) return;
+        d = b[i++]; len += (d & 127) * mult; mult *= 128;
+      } while (d & 128);
+      if (b.length < i + len) return;
+      this.handle(b[0], b.subarray(i, i + len));
+      this.buf = b.slice(i + len);
+    }
+  };
+  Conn.prototype.handle = function (h, body) {
+    var self = this, type = h >> 4;
+    if (type === 2) { // CONNACK
+      if (body[1] !== 0) { try { self.ws.close(); } catch (e) {} return; }
+      self.backoff = 1000;
+      self.ws.send(subscribePkt(1, self.opts.subs));
+      (self.opts.onConnect || []).forEach(function (p) { self.ws.send(publishPkt(p.topic, p.payload, p.retain)); });
+      clearInterval(self.ping);
+      self.ping = setInterval(function () { self.send(new Uint8Array([0xC0, 0])); }, 20000);
+      self.setReady(true);
+    } else if (type === 3) { // PUBLISH
+      var qos = (h >> 1) & 3, tlen = (body[0] << 8) | body[1];
+      var topic = td.decode(body.subarray(2, 2 + tlen)), p = 2 + tlen;
+      if (qos > 0) {
+        var pid = body.subarray(p, p + 2); p += 2;
+        if (qos === 1) self.send(concat([new Uint8Array([0x40, 2]), pid]));
+      }
+      self.opts.onPublish(topic, td.decode(body.subarray(p)), !!(h & 1));
+    }
+  };
+  Conn.prototype.send = function (bytes) {
+    if (this.ws && this.ws.readyState === 1) { this.ws.send(bytes); return true; }
+    return false;
+  };
+  Conn.prototype.publish = function (topic, payload, retain) {
+    return this.ready && this.send(publishPkt(topic, payload, retain));
+  };
+  Conn.prototype.close = function () {
+    this.stopped = true; clearInterval(this.ping); clearTimeout(this.retryTimer);
+    try { this.ws.send(new Uint8Array([0xE0, 0])); this.ws.close(); } catch (e) {}
+  };
+  // Reconnect right away (e.g. when the phone screen wakes up).
+  Conn.prototype.kick = function () {
+    if (this.stopped) return;
+    if (!this.ws || this.ws.readyState > 1) { clearTimeout(this.retryTimer); this.retryTimer = null; this.backoff = 1000; this.open(); }
+  };
+
+  // ---------- encrypted relay ----------
+  function Relay(o) {
+    var self = this;
+    self.o = o; self.role = o.role; self.peer = o.role === 'pc' ? 'phone' : 'pc';
+    self.base = 'qfd/' + o.topic + '/';
+    self.seen = []; self.peerOnline = {}; self.lastStateTs = 0;
+    self.keyP = crypto.subtle.importKey('raw', unb64u(o.key), 'AES-GCM', false, ['encrypt', 'decrypt']);
+    var onlineTopic = self.base + self.role + '/online';
+    self.conns = BROKERS.map(function (url) {
+      return new Conn(url, {
+        subs: [self.base + self.peer + '/msg', self.base + self.peer + '/online'],
+        will: { topic: onlineTopic, payload: '0', retain: true },
+        onConnect: [{ topic: onlineTopic, payload: '1', retain: true }],
+        onReady: function () { self.emitStatus(); },
+        onPublish: function (topic, payload) { self.receive(url, topic, payload); }
+      });
+    });
+  }
+  Relay.prototype.status = function () {
+    var self = this;
+    return {
+      brokers: self.conns.filter(function (c) { return c.ready; }).length,
+      peerOnline: self.conns.some(function (c) { return c.ready && self.peerOnline[c.url]; })
+    };
+  };
+  Relay.prototype.emitStatus = function () { if (this.o.onStatus) this.o.onStatus(this.status()); };
+  Relay.prototype.receive = function (url, topic, payload) {
+    var self = this;
+    if (/\/online$/.test(topic)) { self.peerOnline[url] = payload === '1'; self.emitStatus(); return; }
+    self.keyP.then(function (key) {
+      var raw = unb64u(payload);
+      return crypto.subtle.decrypt({ name: 'AES-GCM', iv: raw.subarray(0, 12) }, key, raw.subarray(12));
+    }).then(function (plain) {
+      var msg = JSON.parse(td.decode(plain));
+      if (self.seen.indexOf(msg.mid) >= 0) return; // same message via the other broker
+      self.seen.push(msg.mid); if (self.seen.length > 200) self.seen.shift();
+      if (msg.t === 'state') {
+        if (msg.ts < self.lastStateTs) return;
+        self.lastStateTs = msg.ts;
+      } else if (Date.now() - msg.ts > 120000) return; // ignore stale commands
+      self.o.onMessage(msg);
+    }).catch(function () { /* not ours / wrong key */ });
+  };
+  Relay.prototype.send = function (obj, retain) {
+    var self = this;
+    obj.mid = b64u(rand(9)); obj.ts = Date.now();
+    var iv = rand(12);
+    return self.keyP.then(function (key) {
+      return crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, te.encode(JSON.stringify(obj)));
+    }).then(function (ct) {
+      var payload = b64u(concat([iv, new Uint8Array(ct)]));
+      var sent = 0;
+      self.conns.forEach(function (c) { if (c.publish(self.base + self.role + '/msg', payload, retain)) sent++; });
+      return sent;
+    });
+  };
+  Relay.prototype.kick = function () { this.conns.forEach(function (c) { c.kick(); }); };
+  Relay.prototype.close = function () {
+    var t = this.base + this.role + '/online';
+    this.conns.forEach(function (c) { c.publish(t, '0', true); c.close(); });
+  };
+
+  return { Relay: Relay, newPairing: newPairing, encodePairing: encodePairing, decodePairing: decodePairing };
+})();
+
+</script>
+<script>
+/* QParse — turns what a student says into Qless form fields. */
+var QParse = (function () {
+  'use strict';
+  var ONES = { zero: 0, oh: 0, o: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9 };
+  var TEENS = { ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19 };
+  var TENS = { twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
+  var FILLER = { uh: 1, um: 1, umm: 1, uhh: 1, dash: 1, hyphen: 1, 'and': 0 };
+  var PHONE_CTX = /\b(phone|number|cell|call|text|mobile)\b/;
+  var ID_CTX = /\b(id|i\.d\.?|cwid|c\.?w\.?i\.?d|student\s+(id|number)|collin\s+id)\b/;
+
+  function isDigitTok(t) { return /^\d+$/.test(t); }
+
+  // "nine seven two, five five five ..." / "double five" / "twenty one" -> digit tokens
+  function wordsToDigits(text) {
+    var toks = text.toLowerCase().replace(/[()]/g, ' ').replace(/(\d)[-.](?=\d)/g, '$1').replace(/[,!?;:"]/g, ' ')
+      .replace(/(\D)\.(\s|$)/g, '$1 ').split(/\s+/).filter(Boolean);
+    var out = [];
+    function numAt(i) { // parse a 0-99 number starting at i -> [value, tokensUsed, isTwoDigit]
+      var t = toks[i];
+      if (t in TENS) {
+        if (toks[i + 1] in ONES && toks[i + 1] !== 'oh' && toks[i + 1] !== 'o' && toks[i + 1] !== 'zero') return [TENS[t] + ONES[toks[i + 1]], 2, true];
+        return [TENS[t], 1, true];
+      }
+      if (t in TEENS) return [TEENS[t], 1, true];
+      if (t in ONES) return [ONES[t], 1, false];
+      return null;
+    }
+    for (var i = 0; i < toks.length; i++) {
+      var t = toks[i];
+      if ((t === 'double' || t === 'triple') && toks[i + 1] in ONES) {
+        out.push(String(ONES[toks[i + 1]]).repeat(t === 'double' ? 2 : 3)); i++; continue;
+      }
+      if ((t === 'oh' || t === 'o') && !(isDigitTok(out[out.length - 1] || '') || toks[i + 1] in ONES || isDigitTok(toks[i + 1] || ''))) {
+        out.push(t); continue; // "oh" as an exclamation
+      }
+      var n = numAt(i);
+      if (n) {
+        var used = n[1], val = String(n[0]);
+        var nx = toks[i + used];
+        if (!n[2] && (nx === 'hundred' || nx === 'thousand')) {
+          var rest = numAt(i + used + 1), width = nx === 'hundred' ? 2 : 3;
+          val = String(n[0]) + (rest ? String(rest[0]).padStart(width, '0') : '0'.repeat(width));
+          used += 1 + (rest ? rest[1] : 0);
+        }
+        out.push(val); i += used - 1; continue;
+      }
+      out.push(t);
+    }
+    return out;
+  }
+
+  // Collapse "a h m e d" / "A-H-M-E-D" into "ahmed" (students spelling things out).
+  function collapseSpelling(text) {
+    return text.replace(/\b([A-Za-z])(?:[\s-]+[A-Za-z]\b){2,}/g, function (m) { return m.replace(/[\s-]+/g, ''); });
+  }
+
+  // Group digit tokens into runs, remembering the words just before each run.
+  function digitRuns(text) {
+    var toks = wordsToDigits(text), runs = [], cur = null;
+    for (var i = 0; i < toks.length; i++) {
+      var t = toks[i];
+      var m = /^([a-z]{1,2})(\d{5,9})$/.exec(t); // "cc1234567"
+      if (isDigitTok(t) || (m && !cur)) {
+        if (!cur) cur = { digits: '', prefix: m ? m[1] : '', ctx: toks.slice(Math.max(0, i - 6), i).join(' ') };
+        cur.digits += m ? m[2] : t;
+      } else if (cur && FILLER[t]) {
+        continue;
+      } else if (cur) { runs.push(cur); cur = null; }
+    }
+    if (cur) runs.push(cur);
+    return runs;
+  }
+
+  function classifyRun(r) {
+    var d = r.digits, phoneCtx = PHONE_CTX.test(r.ctx), idCtx = ID_CTX.test(r.ctx);
+    if (r.prefix && d.length >= 6) return { cwid: r.prefix + d };
+    if (d.length === 11 && d[0] === '1') d = d.slice(1);
+    if (d.length === 10 && !(idCtx && !phoneCtx)) return { phone: d };
+    if (d.length >= 7 && d.length <= 9 && (idCtx || (d.length === 9 && !phoneCtx))) return { cwid: d };
+    if (d.length === 19) { // phone + id said back to back
+      return idCtx && !phoneCtx ? { cwid: d.slice(0, 9), phone: d.slice(9) } : { phone: d.slice(0, 10), cwid: d.slice(10) };
+    }
+    return {};
+  }
+
+  var NAME_STOP = /^(and|i|im|i'm|my|here|for|with|the|to|about|um|uh|so|need|want|wanted|phone|number|id|student|it|its|it's|is|was|but|from|at|in|on|a|an|calling|trying|looking|just|not|gonna|going|having|wondering|new|here|today|okay|ok|yes|yeah|no|please|thanks|thank|hi|hello|hey|sorry|actually|like|cause|because|um,|last|first|name|spelled|spell)$/i;
+
+  function titleCase(s) {
+    return s.toLowerCase().replace(/(^|[\s'-])([a-z])/g, function (m, a, b) { return a + b.toUpperCase(); });
+  }
+
+  function extractName(text) {
+    var src = collapseSpelling(text), best = null;
+    var re = /\b(my name is|my name's|name is|name's|names|call me|i am|i'm|im|this is|it's|its)\s+([A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,3})/gi, m;
+    while ((m = re.exec(src))) {
+      var strong = /name|call me/i.test(m[1]);
+      var words = m[2].split(/\s+/), keep = [];
+      for (var i = 0; i < words.length && keep.length < 3; i++) {
+        if (NAME_STOP.test(words[i])) break;
+        // For "I'm X" / "this is X" only trust words the recognizer capitalized (proper nouns).
+        if (!strong && !/^[A-Z]/.test(words[i])) break;
+        keep.push(words[i]);
+      }
+      if (keep.length) best = titleCase(keep.join(' '));
+    }
+    return best;
+  }
+
+  // Everything we can pull out of a transcript. Later mentions win (people correct themselves).
+  function extract(text) {
+    var res = {};
+    digitRuns(text).forEach(function (r) {
+      var c = classifyRun(r);
+      if (c.phone) res.phone = c.phone;
+      if (c.cwid) res.cwid = c.cwid;
+    });
+    var name = extractName(text);
+    if (name) res.name = name;
+    return res;
+  }
+
+  // Field-specific parsing for the per-field mic buttons.
+  function parseField(field, text) {
+    if (field === 'phone' || field === 'cwid') {
+      var all = wordsToDigits(collapseSpelling(text)).join(' ');
+      if (field === 'cwid') {
+        all = all.replace(/\b(?:see|sea|c)\s+(?:see|sea|c)\b/g, 'cc').replace(/\b([a-z])\s+([a-z])\b(?=\s*\d)/g, '$1$2');
+        var m =/\b([a-z]{1,2})\s*((?:\d\s*){6,9})\b/.exec(all);
+        if (m) return m[1] + m[2].replace(/\s/g, '');
+      }
+      var d = all.replace(/[^\d]/g, '');
+      if (field === 'phone' && d.length === 11 && d[0] === '1') d = d.slice(1);
+      return d || null;
+    }
+    if (field === 'name') {
+      var n = extractName(text);
+      if (n) return n;
+      var words = collapseSpelling(text).replace(/[^A-Za-z'\s-]/g, ' ').split(/\s+/).filter(function (w) { return w && !NAME_STOP.test(w); });
+      return words.length ? titleCase(words.slice(0, 3).join(' ')) : null;
+    }
+    return text.trim();
+  }
+
+  // ---------- which queue / type of service ----------
+  var FA_SAY = /financial aid|\bfafsa\b|\btasfa\b|\bpell\b|\bgrants?\b|\bloans?\b|scholarship|refund|disburs|verification|\baward|\bsap\b|work.?study|veteran|\bva\b|gi bill|military|hazlewood|\bmoney\b|pay for (?:school|college|classes)/g;
+  var ENR_SAY = /advis|admission|\bapply|application|\bdegree|\benroll|\bregist|transcript|\bhold\b|\bclass(?:es)?\b|residen|\btsi\b|graduat|\bdrop|withdraw|\bmajor\b|\bschedule/g;
+  var GROUPS = [
+    { svc: /degree|audit|graduat|\bplan\b/, say: /degree plan|degree audit|graduat|what classes|which classes|classes (?:i|do i) need|transfer plan|\bdegree\b|\bmajor\b/g },
+    { svc: /advis|counsel/, say: /advis|counsel|classes to take|pick (?:my )?classes|meet with (?:someone|an? )|talk to (?:someone|an? )/g },
+    { svc: /admiss|new student|apply|applica/, say: /admission|\bapply|application|applied|new student|first time|get started|accepted|\badmit/g },
+    { svc: /hold/, say: /\bhold\b|blocked|can'?t register|cannot register|won'?t let me register/g },
+    { svc: /regist|enroll|add|drop|withdraw|schedul/, say: /\bregist|\benroll|sign up for|add (?:a )?class|\bdrop|withdraw|waitlist|wait list|\bschedule\b/g },
+    { svc: /transcript|record/, say: /transcript|\brecords?\b/g },
+    { svc: /residen|tuition/, say: /residen|in.state|out.of.state|tuition rate/g },
+    { svc: /test|tsi|placement/, say: /\btsi\b|placement|\btest/g },
+    { svc: /fafsa|tasfa/, say: /\bfafsa\b|\btasfa\b|free application/g },
+    { svc: /verif|document/, say: /verif|document|tax return|\bupload/g },
+    { svc: /schol/, say: /scholarship/g },
+    { svc: /loan/, say: /\bloans?\b/g },
+    { svc: /refund|disburs|payment|award|status|check/, say: /refund|disburs|\bmoney\b|\bawards?\b|when (?:do|will|does) (?:i|my)|\bpell\b|\bgrants?\b|\bstatus\b/g },
+    { svc: /\bsap\b|appeal|probation|suspen|satisf/, say: /\bsap\b|appeal|satisfactory|probation|suspen/g },
+    { svc: /veteran|\bva\b|military|\bgi\b/, say: /veteran|\bva\b|military|gi bill|\barmy\b|\bnavy\b|marine|air force|chapter 3[13]|hazlewood/g },
+    { svc: /work.?study/, say: /work.?study/g }
+  ];
+  function count(re, text) { re.lastIndex = 0; var m = text.match(re); return m ? m.length : 0; }
+  var STOPWORDS = /^(and|the|for|with|from|services?|campus|wylie|other|general)$/;
+
+  function scoreService(name, text) {
+    var n = name.toLowerCase(), s = 0;
+    GROUPS.forEach(function (g) { if (g.svc.test(n)) s += count(g.say, text) * 2; });
+    n.split(/[^a-z]+/).forEach(function (w) {
+      if (w.length >= 4 && !STOPWORDS.test(w) && new RegExp('\\b' + w.slice(0, Math.max(4, w.length - 2))).test(text)) s += 1;
+    });
+    return s;
+  }
+
+  // queues: [{id, name, services:[{id, name}]}] -> {queueId, serviceId}
+  function classify(text, queues) {
+    text = (text || '').toLowerCase();
+    var fa = count(FA_SAY, text), enr = count(ENR_SAY, text), best = null;
+    (queues || []).forEach(function (q) {
+      var isFA = /financ|veteran/i.test(q.name), qs = (isFA ? fa : enr) * 2, bestSvc = null;
+      (q.services || []).forEach(function (s) {
+        var sc = scoreService(s.name, text);
+        if (sc > 0 && (!bestSvc || sc > bestSvc.score)) bestSvc = { id: s.id, score: sc };
+      });
+      var total = qs + (bestSvc ? bestSvc.score : 0);
+      if (total > 0 && (!best || total > best.score)) best = { queueId: q.id, serviceId: bestSvc ? bestSvc.id : null, score: total };
+    });
+    return best || {};
+  }
+
+  function formatPhone(d) {
+    return d && d.length === 10 ? d.slice(0, 3) + '-' + d.slice(3, 6) + '-' + d.slice(6) : (d || '');
+  }
+
+  return { extract: extract, parseField: parseField, classify: classify, formatPhone: formatPhone, wordsToDigits: wordsToDigits };
+})();
+
+</script>
+<script>
+(function () {
+  'use strict';
+  var $ = function (s) { return document.querySelector(s); };
+  var store = {
+    get: function (k, d) { try { var v = localStorage.getItem('qfd.' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+    set: function (k, v) { try { localStorage.setItem('qfd.' + k, JSON.stringify(v)); } catch (e) {} }
+  };
+  var digits = function (s) { return String(s || '').replace(/\D/g, ''); };
+  var shortQ = function (n) { return String(n || '').replace(/^.*? - /, ''); };
+
+  // ---------- pairing ----------
+  var pairing = null;
+  var hm = /[#&]p=([^&]+)/.exec(location.hash);
+  if (hm) { pairing = QRelay.decodePairing(decodeURIComponent(hm[1])); if (pairing) store.set('pairing', pairing); }
+  if (!pairing) pairing = store.get('pairing', null);
+  if (!pairing) {
+    $('#pairScreen').hidden = false;
+    $('#pairBtn').onclick = function () {
+      var m = /p=([A-Za-z0-9_.-]+)/.exec($('#pairInput').value) || [null, $('#pairInput').value];
+      var p = QRelay.decodePairing(m[1]);
+      if (!p) { alert('That does not look like a pairing link.'); return; }
+      store.set('pairing', p); location.hash = 'p=' + QRelay.encodePairing(p); location.reload();
+    };
+    return;
+  }
+  $('#app').hidden = false;
+
+  // ---------- state ----------
+  var pc = null, pcOnline = false, brokers = 0;
+  var form, manual, committed, session, focus, pendingAdd, lastSynced, autoCancelled;
+  var settings = { autoAdd: store.get('autoAdd', false), autoFill: store.get('autoFill', true) };
+  function reset() {
+    form = { queueId: null, serviceId: null, phone: '', name: '', cwid: '', note: '' };
+    manual = {}; committed = ''; session = ''; focus = null; pendingAdd = null; lastSynced = ''; autoCancelled = false;
+  }
+  reset();
+
+  var relay = new QRelay.Relay({
+    topic: pairing.topic, key: pairing.key, role: 'phone',
+    onMessage: function (m) { if (m.t === 'state') onPcState(m); },
+    onStatus: function (s) {
+      var was = brokers; brokers = s.brokers; pcOnline = s.peerOnline;
+      if (!was && brokers) relay.send({ t: 'hello' });
+      renderStatus(); renderAdd();
+    }
+  });
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') { relay.kick(); relay.send({ t: 'hello' }); if (listening) acquireWakeLock(); }
+  });
+
+  function onPcState(m) {
+    pc = m;
+    if (form.queueId == null && m.queues.length) {
+      var c = QParse.classify(committed + session, m.queues);
+      if (c.queueId != null) { form.queueId = c.queueId; form.serviceId = c.serviceId; }
+    }
+    var l = m.last;
+    if (l && pendingAdd && l.reqId === pendingAdd) {
+      pendingAdd = null;
+      if (l.status === 'added') { showResult(true, '✅ ' + l.msg); setTimeout(function () { nextStudent(false); }, 1800); }
+      else showResult(false, '⚠️ ' + l.msg);
+    }
+    renderAll();
+  }
+
+  // ---------- speech ----------
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  var rec = null, listening = false, wakeLock = null;
+
+  function hint(msg, err) { var h = $('#hint'); h.textContent = msg || ''; h.className = 'hint' + (err ? ' err' : ''); }
+  function acquireWakeLock() {
+    if (navigator.wakeLock && !wakeLock) navigator.wakeLock.request('screen').then(function (w) { wakeLock = w; w.addEventListener('release', function () { wakeLock = null; }); }).catch(function () {});
+  }
+  function makeRec() {
+    var r = new SR();
+    r.lang = 'en-US'; r.interimResults = true; r.maxAlternatives = 1;
+    r.continuous = !isIOS; // iOS repeats phrases in continuous mode; restart per utterance instead
+    r.onresult = function (e) {
+      var t = '';
+      for (var i = 0; i < e.results.length; i++) t += e.results[i][0].transcript + ' ';
+      session = t; onTranscript();
+    };
+    r.onerror = function (e) {
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        listening = false; renderMic();
+        hint('Mic or speech is blocked. Allow the microphone for this site, and turn on Dictation (Settings → General → Keyboard). The keyboard 🎤 works as a backup.', true);
+      } else if (e.error === 'audio-capture') { hint('No microphone available.', true); }
+    };
+    r.onend = function () {
+      commitSession();
+      if (listening) setTimeout(function () { try { r.start(); } catch (err) { listening = false; renderMic(); hint('Tap the mic to keep listening.'); } }, isIOS ? 120 : 30);
+      else renderMic();
+    };
+    return r;
+  }
+  function startListening() {
+    if (!SR) { hint('Speech recognition is not available in this browser — open this page in Safari, or use the keyboard 🎤.', true); return; }
+    if (!rec) rec = makeRec();
+    listening = true;
+    try { rec.start(); } catch (e) { /* already running */ }
+    acquireWakeLock(); renderMic(); hint('Listening… talk normally with the student.');
+  }
+  function stopListening() {
+    listening = false; focus = null;
+    try { rec && rec.stop(); } catch (e) {}
+    if (wakeLock) { wakeLock.release(); wakeLock = null; }
+    renderMic(); renderFields(); hint('');
+  }
+  function commitSession() {
+    if (session.trim()) committed += session.trim() + '. ';
+    session = '';
+    if (focus && focus.got) { focus = null; renderFields(); hint(listening ? 'Listening…' : ''); }
+    renderTranscript();
+  }
+
+  function onTranscript() {
+    var text = committed + session;
+    renderTranscript();
+    if (focus) {
+      var val = QParse.parseField(focus.field, text.slice(focus.from));
+      if (val) {
+        if (focus.field === 'phone') val = val.slice(0, 10);
+        form[focus.field] = val; manual[focus.field] = true; focus.got = true;
+        if (focus.field === 'phone' && val.length === 10) { focus = null; hint('Got the number. Listening…'); }
+      }
+    }
+    var ex = QParse.extract(text);
+    ['phone', 'name', 'cwid'].forEach(function (k) { if (ex[k] && !manual[k]) form[k] = ex[k]; });
+    if (pc && !manual.queueId) {
+      var c = QParse.classify(text, pc.queues);
+      if (c.queueId != null) {
+        if (String(c.queueId) !== String(form.queueId) && !manual.serviceId) form.serviceId = null;
+        form.queueId = c.queueId;
+        if (c.serviceId != null && !manual.serviceId) form.serviceId = c.serviceId;
+      }
+    }
+    renderFields(); renderAdd(); scheduleSync();
+  }
+
+  // ---------- sync with PC ----------
+  var syncTimer = null, autoTimer = null, autoLeft = 0;
+  function payload() {
+    return { queueId: form.queueId, serviceId: form.serviceId, phone: form.phone.length === 10 ? form.phone : '', name: form.name.trim(), cwid: form.cwid.trim(), note: form.note.trim() };
+  }
+  function scheduleSync() {
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(function () {
+      if (!settings.autoFill || form.phone.length !== 10 || !pcOnline) return;
+      var p = payload(), sig = JSON.stringify(p);
+      if (sig === lastSynced) return;
+      lastSynced = sig;
+      relay.send(Object.assign({ t: 'fill', reqId: 'f' + Date.now() }, p));
+    }, 700);
+    maybeAutoAdd();
+  }
+  function lookupFor() { return pc && pc.lookup && pc.lookup.phone === form.phone ? pc.lookup : null; }
+  function knownName() { var lk = lookupFor(); return form.name.trim() || (lk && lk.name) || ''; }
+  function queueServices() {
+    var q = pc && pc.queues.filter(function (q) { return String(q.id) === String(form.queueId); })[0];
+    return q ? q.services : [];
+  }
+  function canAdd() { return pcOnline && form.queueId != null && form.phone.length === 10 && !pendingAdd; }
+  function readyForAuto() {
+    return canAdd() && knownName() && (form.serviceId != null || queueServices().length < 2) && lookupFor() && !autoCancelled;
+  }
+  function sendAdd() {
+    clearInterval(autoTimer); autoTimer = null;
+    pendingAdd = 'a' + Date.now();
+    relay.send(Object.assign({ t: 'fill', add: true, reqId: pendingAdd }, payload()));
+    lastSynced = JSON.stringify(payload());
+    renderAdd();
+    setTimeout(function () { if (pendingAdd) { pendingAdd = null; showResult(false, '⚠️ No answer from the PC — check it.'); renderAdd(); } }, 15000);
+  }
+  function maybeAutoAdd() {
+    if (!settings.autoAdd) return;
+    clearInterval(autoTimer); autoTimer = null;
+    if (!readyForAuto()) { renderAdd(); return; }
+    autoLeft = 4;
+    autoTimer = setInterval(function () {
+      autoLeft--;
+      if (autoLeft <= 0) sendAdd(); else renderAdd();
+    }, 1000);
+    renderAdd();
+  }
+
+  function nextStudent(closePc) {
+    clearInterval(autoTimer); autoTimer = null;
+    if (closePc && pcOnline) relay.send({ t: 'cancel' });
+    reset(); if (rec && listening) { try { rec.abort(); } catch (e) {} }
+    $('#transcript').value = '';
+    renderAll();
+  }
+
+  // ---------- rendering ----------
+  function renderStatus() {
+    $('#dot').className = 'dot' + (pcOnline ? ' on' : brokers ? ' half' : '');
+    $('#statusText').textContent = pcOnline ? 'PC connected' : brokers ? 'PC offline — open Qless on the PC' : 'Connecting…';
+    $('#today').textContent = pc && pc.stats ? 'Today: ' + pc.stats.total : '';
+  }
+  function renderQueues() {
+    var box = $('#queues'); box.innerHTML = '';
+    (pc ? pc.queues : []).forEach(function (q) {
+      var d = document.createElement('div'); d.className = 'qstat';
+      var b = document.createElement('b'); b.textContent = shortQ(q.name);
+      d.appendChild(b);
+      d.appendChild(document.createTextNode((q.wait || '') + (q.waiting != null ? ' · ' + q.waiting + ' waiting' : '')));
+      box.appendChild(d);
+    });
+  }
+  function renderMic() { $('#mic').className = listening ? 'on' : ''; $('#mic').textContent = listening ? '■' : '🎙'; }
+  function renderTranscript() {
+    var ta = $('#transcript');
+    if (document.activeElement !== ta) { ta.value = committed + session; ta.scrollTop = ta.scrollHeight; }
+  }
+  // Rebuild buttons only when the list itself changes, so taps never land on a node that was just replaced.
+  function keyed(box, sig, build) {
+    if (box.dataset.sig !== sig) { box.dataset.sig = sig; box.innerHTML = ''; build(); }
+  }
+  function renderFields() {
+    var queues = pc ? pc.queues : [];
+    var seg = $('#queueSeg');
+    keyed(seg, JSON.stringify(queues.map(function (q) { return [q.id, q.name]; })), function () {
+      queues.forEach(function (q) {
+        var b = document.createElement('button');
+        b.dataset.id = q.id;
+        b.textContent = shortQ(q.name).replace(/ Services?$/, '').replace('Financial Aid & Veteran', 'Financial Aid / VA');
+        b.onclick = function () {
+          if (String(form.queueId) !== String(q.id)) form.serviceId = null;
+          form.queueId = q.id; manual.queueId = true; autoCancelled = false; renderFields(); renderAdd(); scheduleSync();
+        };
+        seg.appendChild(b);
+      });
+    });
+    seg.querySelectorAll('button').forEach(function (b) { b.classList.toggle('sel', b.dataset.id === String(form.queueId)); });
+
+    var sv = $('#services'), list = queueServices();
+    var emptyMsg = !pc ? 'Waiting for the PC…' : form.queueId == null ? 'Pick a queue (or just let them say why they\'re here)' : '';
+    keyed(sv, form.queueId + '|' + emptyMsg + '|' + JSON.stringify(list), function () {
+      if (emptyMsg) { var h = document.createElement('span'); h.className = 'hint'; h.textContent = emptyMsg; sv.appendChild(h); }
+      list.forEach(function (s) {
+        var c = document.createElement('button'); c.className = 'chip'; c.dataset.id = s.id;
+        c.textContent = s.name;
+        c.onclick = function () { form.serviceId = s.id; manual.serviceId = true; autoCancelled = false; renderFields(); renderAdd(); scheduleSync(); };
+        sv.appendChild(c);
+      });
+    });
+    sv.querySelectorAll('.chip').forEach(function (c) { c.classList.toggle('sel', c.dataset.id === String(form.serviceId)); });
+    var lk = lookupFor();
+    setField('phone', QParse.formatPhone(form.phone));
+    setField('name', form.name, lk && lk.name ? lk.name + ' (from Qless)' : 'Filled by Qless if they\'ve been here');
+    setField('cwid', form.cwid, lk && lk.cwid ? lk.cwid + ' (from Qless)' : 'Student ID');
+    setField('note', form.note);
+    document.querySelectorAll('.fmic').forEach(function (b) { b.classList.toggle('on', !!focus && focus.field === b.dataset.field); });
+    var L = $('#lookup');
+    if (lk) {
+      L.className = lk.known ? 'known' : 'new';
+      L.textContent = lk.known ? '↩︎ Returning: ' + (lk.name || 'name on file') + (lk.cwid ? ' · CWID ' + lk.cwid : ' · no CWID on file — ask for it') : '★ New number — get their name and CWID';
+    } else if (form.phone.length === 10 && pcOnline && settings.autoFill) { L.className = ''; L.textContent = 'Looking up ' + QParse.formatPhone(form.phone) + '…'; }
+    else { L.className = ''; L.textContent = ''; }
+  }
+  function setField(k, v, ph) {
+    var el = $('#f-' + k);
+    if (document.activeElement !== el) el.value = v || '';
+    if (ph) el.placeholder = ph;
+    el.classList.toggle('auto', !!v && !manual[k]);
+  }
+  function renderAdd() {
+    var b = $('#add');
+    b.disabled = !canAdd();
+    b.classList.toggle('counting', !!autoTimer);
+    b.textContent = pendingAdd ? 'Adding…' : autoTimer ? 'Adding in ' + autoLeft + '… (tap to stop)' : 'Add to queue';
+    if (autoTimer) b.disabled = false;
+  }
+  function renderAll() { renderStatus(); renderQueues(); renderFields(); renderAdd(); renderTranscript(); }
+  var resultTimer;
+  function showResult(ok, msg) {
+    var r = $('#result'); r.hidden = false; r.className = ok ? 'ok' : 'bad'; r.textContent = msg;
+    clearTimeout(resultTimer); resultTimer = setTimeout(function () { r.hidden = true; }, ok ? 2500 : 6000);
+    if (navigator.vibrate) navigator.vibrate(ok ? 40 : [60, 60, 60]);
+  }
+
+  // ---------- inputs ----------
+  $('#mic').onclick = function () { listening ? stopListening() : startListening(); };
+  document.querySelectorAll('.fmic').forEach(function (b) {
+    b.onclick = function () {
+      var f = b.dataset.field;
+      if (focus && focus.field === f) { focus = null; renderFields(); hint(listening ? 'Listening…' : ''); return; }
+      if (rec && listening) { try { rec.abort(); } catch (e) {} } // fresh utterance for this field
+      commitSession();
+      focus = { field: f, from: (committed + session).length };
+      if (!listening) startListening();
+      hint({ phone: 'Listening for the phone number…', name: 'Listening for their name (they can spell it)…', cwid: 'Listening for the CWID…', note: 'Listening for a note…' }[f]);
+      renderFields();
+    };
+  });
+  ['phone', 'name', 'cwid', 'note'].forEach(function (k) {
+    $('#f-' + k).addEventListener('input', function (e) {
+      form[k] = k === 'phone' ? digits(e.target.value).slice(-10) : e.target.value;
+      manual[k] = true; autoCancelled = false;
+      if (k === 'phone' && form.phone.length === 10) { e.target.value = QParse.formatPhone(form.phone); }
+      renderAdd(); scheduleSync();
+      if (k === 'phone') renderFields();
+    });
+    $('#f-' + k).addEventListener('blur', function () { renderFields(); });
+  });
+  $('#transcript').addEventListener('input', function (e) { committed = e.target.value; session = ''; onTranscript(); });
+  $('#add').onclick = function () {
+    if (autoTimer) { clearInterval(autoTimer); autoTimer = null; autoCancelled = true; renderAdd(); return; }
+    if (canAdd()) sendAdd();
+  };
+  $('#next').onclick = function () { nextStudent(true); };
+  $('#settingsBtn').onclick = function () { $('#autoAdd').checked = settings.autoAdd; $('#autoFill').checked = settings.autoFill; $('#settings').showModal(); };
+  $('#closeSettings').onclick = function () { $('#settings').close(); };
+  $('#autoAdd').onchange = function (e) { settings.autoAdd = e.target.checked; store.set('autoAdd', settings.autoAdd); maybeAutoAdd(); };
+  $('#autoFill').onchange = function (e) { settings.autoFill = e.target.checked; store.set('autoFill', settings.autoFill); };
+  $('#unpair').onclick = function () { store.set('pairing', null); relay.close(); location.hash = ''; location.reload(); };
+
+  renderAll(); renderMic();
+})();
+</script>
+</body>
+</html>
