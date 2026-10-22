@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Qless Front Desk Assistant
 // @namespace    qless-front-desk
-// @version      2.3.0
+// @version      2.4.0
 // @description  Hands-free iPhone voice check-in, live assistant tips, CWID auto-fill, shortcuts and a daily counter for Qless
 // @match        *://merchant.qless.com/*
 // @require      https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js
@@ -231,7 +231,7 @@
    * kb.json (private) is published only as AES-GCM ciphertext (kb.enc); the key lives on the PC + phone. */
   var QKB = (function () {
     'use strict';
-    var kb = null, index = [];
+    var kb = null, index = [], byEmail = {}, quick = [];
   
     function unb64u(str) {
       str = str.replace(/-/g, '+').replace(/_/g, '/');
@@ -296,7 +296,15 @@
       (kb.cards || []).forEach(function (c) {
         index.push({ card: c, triggers: (c.triggers || []).map(function (t) { return norm(t); }) });
       });
+      var dir = {};
+      (kb.directory || []).forEach(function (d) { dir[d.name.toLowerCase()] = d; if (d.email) byEmail[d.email.toLowerCase()] = d; });
+      (kb.directory || []).forEach(function (d) {
+        if ((kb.staff || []).some(function (p) { return p.name.toLowerCase() === d.name.toLowerCase(); })) return;
+        kb.staff = (kb.staff || []).concat([{ name: d.name, title: d.title }]);
+      });
       (kb.staff || []).forEach(function (p) {
+        var dd = dir[p.name.toLowerCase()];
+        if (dd) { p = { name: p.name, title: dd.title || p.title, where: dd.room, phone: dd.ext ? 'ext ' + dd.ext : '', email: dd.email }; }
         var n = norm(p.name);
         if (n.trim().split(' ').length < 2) return; // full names only, to avoid false hits
         index.push({
@@ -304,6 +312,7 @@
           triggers: [n]
         });
       });
+      if (quick.length) setQuick(quick);
       return kb;
     }
   
@@ -381,8 +390,48 @@
       return out.slice(0, max || 6).map(function (x) { return x.card.kind === 'place' && /^room:/.test(x.card.id) ? x.card : render(x.card); });
     }
   
+    // Quick facts typed in on the PC panel ("Guest Wi-Fi :: The code this week is ... :: wifi, internet, password").
+    function setQuick(list) {
+      index = index.filter(function (e) { return !/^quick:/.test(e.card.id); });
+      quick = (list || []).filter(function (q) { return q && q.title; });
+      quick.forEach(function (q, i) {
+        var trig = (q.triggers || []).map(function (t) { return norm(t); }).filter(function (t) { return t.trim(); });
+        if (!trig.length) trig = [norm(q.title)];
+        index.push({ card: { id: 'quick:' + i, kind: 'tip', title: q.title, say: q.say || '', facts: [], priority: 2 }, triggers: trig });
+      });
+    }
+    function parseQuick(text) { // one per line: Title :: what to say :: trigger, words
+      return String(text || '').split(/\n/).map(function (l) {
+        var p = l.split('::').map(function (x) { return x.trim(); });
+        return p[0] ? { title: p[0], say: p[1] || '', triggers: (p[2] || '').split(',').map(function (x) { return x.trim(); }).filter(Boolean) } : null;
+      }).filter(Boolean);
+    }
+    // Schedule: who is on what right now.
+    function hm(t) { var x = t.split(':'); return Number(x[0]) * 60 + Number(x[1]); }
+    function fmt12(t) { var m = hm(t), h = Math.floor(m / 60), mm = m % 60; return (h % 12 || 12) + (mm ? ':' + String(mm).padStart(2, '0') : '') + (h < 12 ? 'am' : 'pm'); }
+    function scheduleFor(date) {
+      if (!kb || !kb.schedule) return null;
+      var d = date || new Date(), iso = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+      var day = kb.schedule.days && kb.schedule.days[iso];
+      if (!day && kb.schedule.weekly) day = kb.schedule.weekly[['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][d.getDay()]];
+      if (!day) return null;
+      var now = d.getHours() * 60 + d.getMinutes();
+      return (day.people || []).map(function (p) {
+        var cur = null, next = null;
+        (p.blocks || []).forEach(function (b) {
+          if (hm(b[0]) <= now && now < hm(b[1])) cur = b;
+          else if (hm(b[0]) > now && (!next || hm(b[0]) < hm(next[0]))) next = b;
+        });
+        var dd = byEmail && kb.directory && kb.directory.filter(function (x) { return x.name.toLowerCase() === p.name.toLowerCase(); })[0];
+        return { name: p.name, short: p.short || p.name.split(' ')[0], role: p.role, now: cur ? cur[2] : (next ? 'Not in yet' : 'Gone for the day'),
+          until: cur ? fmt12(cur[1]) : '', next: next ? next[2] + ' at ' + fmt12(next[0]) : '', ext: dd ? dd.ext : '', email: dd ? dd.email : '' };
+      });
+    }
+    function dirFor(email) { return byEmail[String(email || '').toLowerCase()] || null; }
+  
     return {
-      search: search, fixHeard: fixHeard,
+      search: search, fixHeard: fixHeard, setQuick: setQuick, parseQuick: parseQuick, scheduleFor: scheduleFor, dirFor: dirFor,
+      directory: function () { return (kb && kb.directory) || []; },
       decrypt: decrypt, load: load, match: match, byId: byId, upcoming: upcoming, fmtDate: fmtDate,
       keyterms: function () { return (kb && kb.keyterms) || []; },
       loaded: function () { return !!kb; },
@@ -2141,7 +2190,7 @@
     if (!key) return;
     fetch(phoneUrl() + 'kb.enc', { cache: 'no-cache' }).then(function (r) { return r.text(); })
       .then(function (t) { return QKB.decrypt(t, key); })
-      .then(function (data) { QKB.load(data); log('knowledge base', QKB.version()); loadMaps(data.maps); renderLive(); })
+      .then(function (data) { QKB.load(data); applyQuick(); log('knowledge base', QKB.version()); loadMaps(data.maps); renderLive(); })
       .catch(function (e) { log('knowledge base not loaded', e); });
   }
   // ---------- floor-plan maps with routes from the desk ----------
@@ -2204,10 +2253,12 @@
     });
   }
 
+  function quickList() { return QKB.parseQuick ? QKB.parseQuick(store.get('quick', '')) : []; }
+  function applyQuick() { if (QKB.setQuick) QKB.setQuick(quickList()); }
   function sendConfig() {
     if (!relay) return;
     var me = store.get('me', '');
-    relay.send({ t: 'config', dgKey: store.get('dgKey', ''), kbKey: store.get('kbKey', ''), ignoreNames: me ? [me] : [] });
+    relay.send({ t: 'config', dgKey: store.get('dgKey', ''), kbKey: store.get('kbKey', ''), ignoreNames: me ? [me] : [], quick: quickList() });
   }
 
   function init() {
@@ -2435,6 +2486,38 @@
   }
   function autoFillOn() { return store.get('autoFill', true); }
   function autoAddOn() { return store.get('autoAdd', true); }
+  var translators = {}, trCache = {}, trPending = {};
+  function translatorFor(lang) {
+    if (!('Translator' in self) || !lang || lang === 'en') return Promise.resolve(null);
+    if (!translators[lang]) {
+      translators[lang] = Translator.create({ sourceLanguage: lang, targetLanguage: 'en' })
+        .catch(function (e) { delete translators[lang]; log('translator', lang, e && e.message); return null; });
+    }
+    return translators[lang];
+  }
+  // Chrome may want a click before it downloads a language pack: warm Spanish up on the first click/keypress.
+  ['pointerdown', 'keydown'].forEach(function (ev) {
+    document.addEventListener(ev, function warm() { document.removeEventListener(ev, warm, true); translatorFor('es'); }, true);
+  });
+  function translateSegs(segs) {
+    (segs || []).forEach(function (sg) {
+      if (!sg.lang || sg.lang === 'en' || !sg.t || trCache[sg.t] || trPending[sg.t]) return;
+      trPending[sg.t] = 1;
+      translatorFor(sg.lang).then(function (tr) { return tr ? tr.translate(sg.t) : null; }).then(function (en) {
+        delete trPending[sg.t];
+        if (!en) return;
+        trCache[sg.t] = { lang: sg.lang, en: en };
+        if (relay) relay.send({ t: 'tr', src: sg.t, lang: sg.lang, en: en });
+        renderLive();
+      }).catch(function () { delete trPending[sg.t]; });
+    });
+  }
+  function translationsHtml() {
+    var segs = (live && live.segs) || [], out = segs.filter(function (sg) { return trCache[sg.t]; }).slice(-3);
+    if (!out.length) return '';
+    return out.map(function (sg) { var c = trCache[sg.t]; return '<div class="tr"><small>' + esc((LANG_NAMES[c.lang] || c.lang) + ': ' + sg.t) + '</small>🇺🇸 ' + esc(c.en) + '</div>'; }).join('');
+  }
+
   function onPhoneMessage(m) {
     if (m.t === 'hello') { publishState(true); sendConfig(); }
     else if (m.t === 'fill') {
@@ -2442,7 +2525,7 @@
       if (m.add && m.auto && !autoAddOn()) m.add = false;
       queueFill(m);
     }
-    else if (m.t === 'live') { live = m; liveAt = Date.now(); renderLive(); }
+    else if (m.t === 'live') { live = m; liveAt = Date.now(); translateSegs(m.segs); renderLive(); }
     else if (m.t === 'cancel') { if (vm.showAddConsumer()) acvm.cancelAddConsumer(); currentLookup = null; live = null; hideMap(); renderLive(); publishState(); }
   }
 
@@ -2503,7 +2586,9 @@
       currentLookup = lk = { phone: f.phone, name: nm, cwid: cwidFrom(prev), known: !!(nm || prev) };
       await sleep(120);
     }
-    if (f.name && !String(acvm.consumerName() || '').trim()) { ownName = f.name; acvm.consumerName(f.name); }
+    // Typed-by-us names follow the speech as it firms up ("Jenny" -> "Jenny Park"); names Qless knows are never touched.
+    var curName = String(acvm.consumerName() || '').trim();
+    if (f.name && f.name !== curName && (!curName || curName === ownName)) { ownName = f.name; acvm.consumerName(f.name); }
     var cwid = f.cwid || (lk && lk.phone === f.phone ? lk.cwid : null);
     var note = cwid || f.note ? formatNote(cwid, f.note) : lk && lk.phone === f.phone && !acvm.notes() ? formatNote('', '') : null;
     if (note) {
@@ -2622,6 +2707,10 @@
       '#qfd-live.min .body{display:none}',
       '#qfd-live .sw{display:flex;gap:6px;align-items:center;padding:8px 12px 0}',
       '#qfd-live .kiosk{background:#eef7ee;border-color:#bfe0c2}#qfd-live .kiosk a.x{background:#aaa}',
+      '#qfd-live .favs{background:#fffaf0;border-color:#f0dfb5}#qfd-live .floor{background:#f4f8fc}',
+      '#qfd-live .tr{margin:0 12px 8px;padding:7px 10px;border-radius:8px;background:#eef4ff;border:1px solid #cddcf7;font-size:14px;color:#123}',
+      '#qfd-live .tr small{display:block;color:#678;font-size:11px}',
+      '#qfd-panel textarea{width:100%;box-sizing:border-box;min-height:90px;font:12px Consolas,monospace;border:1px solid #ccc;border-radius:4px;padding:5px}',
       '#qfd-live a.mapbtn{float:right;text-decoration:none;background:#1a73e8;color:#fff;border-radius:12px;padding:1px 9px;font-size:12px;font-weight:normal}',
       '#qfd-map{position:fixed;left:24px;top:96px;z-index:100001;width:min(760px,calc(100vw - 460px));min-width:560px}',
       '#qfd-map .mapc{border-radius:18px;overflow:hidden;box-shadow:0 18px 60px rgba(0,0,0,.35)}',
@@ -2672,6 +2761,8 @@
       '<div style="margin-top:6px"><button class="grey" id="qfd-reset">Reset today</button></div></section>' +
       '<section><h4>Shortcuts</h4>' + qs + '<div><kbd>Ctrl+Enter</kbd> Add (submit)</div><div><kbd>Esc</kbd> Stop the auto-add countdown / close the form</div>' +
       '<div style="color:#888;font-size:11px;margin-top:4px">Phone field is focused automatically; after the lookup the cursor jumps to Notes.</div></section>' +
+      '<section><h4>Quick facts (instant, no Claude needed)</h4><div style="font-size:12px;color:#666;margin-bottom:4px">One per line: <b>Title :: what to tell them :: trigger words</b><br>e.g. Guest Wi-Fi :: Network CollinGuest, code TIGER42 :: wifi, internet, password</div>' +
+      '<textarea id="qfd-quick">' + esc(store.get('quick', '')) + '</textarea><button id="qfd-quick-save">Save</button></section>' +
       '<section><h4>Busy? Self check-in</h4><div style="font-size:12px;color:#666;margin-bottom:6px">Print the QR sign for the counter. Students check themselves in on their phone; they show up here with an Add button.</div>' +
       '<button id="qfd-sign">Open the printable QR sign</button></section>' +
       '<section><h4>Maps</h4><div style="font-size:12px;color:#666;margin-bottom:6px">Routes start at your desk. If the green "You are here" pin is off, click Set and then click your exact spot.</div>' +
@@ -2684,6 +2775,10 @@
     panel.querySelector('#qfd-close').onclick = function () { panel.hidden = true; };
     panel.querySelector('#qfd-pair').onclick = showQr;
     panel.querySelector('#qfd-desk').onclick = function () { panel.hidden = true; editDesk(); };
+    panel.querySelector('#qfd-quick-save').onclick = function () {
+      store.set('quick', panel.querySelector('#qfd-quick').value);
+      applyQuick(); sendConfig(); toast('Quick facts saved (sent to iPhone)');
+    };
     panel.querySelector('#qfd-maptest').onclick = function () { panel.hidden = true; showMap('CC-201', false); };
     panel.querySelector('#qfd-sign').onclick = function () { kioskSignUrl().then(function (u) { if (u) window.open(u, '_blank'); else toast('Open your setup link first'); }); };
     panel.querySelector('#qfd-repair').onclick = function () {
@@ -2717,8 +2812,8 @@
     box.innerHTML = h || '<div class="up">No matches.</div>';
     wireMapButtons(box);
   }
-  var STATE_DOT = { available: '#2db34a', busy: '#e5484d', away: '#e8a317', offline: '#bbb' };
-  var STATE_RANK = { available: 0, away: 1, busy: 2, offline: 3 };
+  var STATE_DOT = { available: '#2db34a', busy: '#e5484d', away: '#e8a317', offline: '#bbb', unknown: '#ddd' };
+  var STATE_RANK = { available: 0, away: 1, busy: 2, offline: 3, unknown: 4 };
   function groupsFor(tips) {
     var q = live && live.fields && live.fields.queueId != null && vm.queuesWS && vm.queuesWS.getQueueById(Number(live.fields.queueId));
     var qn = q ? String(ko.unwrap(q.description)) : '', text = (live && live.text || '').toLowerCase(), g = [];
@@ -2733,11 +2828,41 @@
     if (/enroll/i.test(qn) || /advis|degree plan|hold/.test(ids + text) || !g.length) g.push('Advising');
     return g;
   }
+  function extOf(p) {
+    var d = QKB.dirFor && QKB.dirFor(p.jid || p.email);
+    return p.ext || (d && d.ext) || '';
+  }
   function personRow(p) {
-    var call = p.ext ? '<a href="ciscotel:' + esc(p.ext) + '" title="Call ' + esc(p.name) + ' in Jabber">📞 ' + esc(p.ext) + '</a>' : '';
+    var ext = extOf(p);
+    var call = ext ? '<a href="ciscotel:' + esc(ext) + '" title="Call ' + esc(p.name) + ' in Jabber">📞 ' + esc(ext) + '</a>' : '';
     var im = '<a href="ciscoim:' + esc(p.jid) + '" title="Message ' + esc(p.name) + ' in Jabber">💬</a>';
     return '<div class="pp"><span class="pd" style="background:' + (STATE_DOT[p.state] || '#bbb') + '"></span><span class="pn">' + esc(p.name) + '</span>' +
       '<span class="pm">' + esc(p.msg && p.msg !== '@' + p.ext ? p.msg : p.state === 'available' ? '' : p.state) + '</span>' + call + im + '</div>';
+  }
+  var DEFAULT_FAVS = ['amphillips@collin.edu', 'emedina@collin.edu', 'csarnaparham2593@collin.edu', 'mlangston2617@collin.edu'];
+  function personByEmail(email) {
+    email = String(email).toLowerCase();
+    var t = team.filter(function (p) { return p.jid === email; })[0];
+    if (t) return t;
+    var d = QKB.dirFor && QKB.dirFor(email);
+    return d ? { jid: email, name: d.name, groups: [], ext: d.ext, state: 'unknown', msg: d.title } : null;
+  }
+  function favsHtml() {
+    var list = store.get('favs', DEFAULT_FAVS).map(personByEmail).filter(Boolean);
+    if (!list.length) return '';
+    return '<div class="team favs"><b>⭐ Quick call</b>' + list.map(personRow).join('') + '</div>';
+  }
+  var BLOCK_COLOR = { 'One Stop': '#2db34a', 'Office Hrs': '#1a9ad6', 'Online Adv': '#7b5cd6', 'Meeting': '#e8a317', 'Lunch': '#999', 'Time Off': '#bbb' };
+  function floorHtml() {
+    var sch = QKB.loaded() && QKB.scheduleFor ? QKB.scheduleFor(new Date()) : null;
+    if (!sch || !sch.length) return '';
+    return '<div class="team floor"><b>🕘 On the floor now</b>' + sch.map(function (p) {
+      var person = p.email ? personByEmail(p.email) : null, dot = person && STATE_DOT[person.state] ? person.state : '';
+      return '<div class="pp"><span class="pd" style="background:' + (BLOCK_COLOR[p.now] || '#ddd') + '"></span><span class="pn">' + esc(p.short) + '</span>' +
+        '<span class="pm">' + esc(p.now + (p.until ? ' till ' + p.until : '') + (p.next ? ' · then ' + p.next : '')) + (dot ? ' · Jabber: ' + dot : '') + '</span>' +
+        (p.ext ? '<a href="ciscotel:' + esc(p.ext) + '" title="Call ' + esc(p.name) + '">📞 ' + esc(p.ext) + '</a>' : '') +
+        (p.email ? '<a href="ciscoim:' + esc(p.email) + '" title="Message ' + esc(p.name) + '">💬</a>' : '') + '</div>';
+    }).join('') + '</div>';
   }
   function teamHtml(tips) {
     if (!team.length) return '';
@@ -2747,7 +2872,7 @@
         .sort(function (a, b) { return STATE_RANK[a.state] - STATE_RANK[b.state] || a.name.localeCompare(b.name); });
       if (!list.length) return;
       var free = list.filter(function (p) { return p.state === 'available'; }).length;
-      var shown = list.filter(function (p) { return p.state !== 'offline'; }).slice(0, 5);
+      var shown = list.slice(0, 7);
       h += '<div class="team"><b>' + esc(g) + '</b> <span style="color:#888">· ' + free + ' available</span>' + shown.map(personRow).join('') + '</div>';
     });
     return h;
@@ -2777,6 +2902,7 @@
       var words = live.text.split(/\s+/), cut = Math.max(0, words.length - 14);
       h += '<div class="cap"><div>' + esc(words.slice(0, cut).join(' ')) + ' <b>' + esc(words.slice(cut).join(' ')) + '</b></div></div>';
     }
+    h += translationsHtml();
     if (live && live.fields) {
       var f = live.fields, q = f.queueId != null && vm.queuesWS && vm.queuesWS.getQueueById(Number(f.queueId));
       var tt = q && (acvm.transactionTypesForQueueId(q.id) || []).filter(function (t) { return String(t.id) === String(f.serviceId); })[0];
@@ -2798,7 +2924,7 @@
     });
     // "where is…" -> the map pops up by itself
     if (tips[0] && tips[0].kind === 'place' && tips[0].map && live && Date.now() - liveAt < 15000) showMap(tips[0].map, true);
-    h += teamHtml(tips);
+    h += teamHtml(tips) + favsHtml() + floorHtml();
     var up = QKB.loaded() ? QKB.upcoming(14) : [];
     if (up.length && !tips.length) h += '<div class="up"><b>Coming up</b>' + up.slice(0, 4).map(function (d) { return '<div>' + esc(QKB.fmtDate(d.date)) + ' — ' + esc(d.label) + '</div>'; }).join('') + '</div>';
     h += '</div>';
