@@ -157,7 +157,9 @@
 
 <dialog id="settings">
   <h2>Settings</h2>
-  <label class="switch">Hands-free: auto-add after a 3 s countdown <input type="checkbox" id="autoAdd"></label>
+  <label class="switch">Hands-free: auto-add when everything's filled <input type="checkbox" id="autoAdd"></label>
+  <label class="switch">Countdown before adding
+    <select id="countdown"><option value="0">None — instant</option><option value="1">1 second</option><option value="2">2 seconds</option><option value="3">3 seconds</option></select></label>
   <label class="switch">Speech engine
     <select id="engine"><option value="deepgram">Deepgram (accents, languages)</option><option value="apple">Apple (free, English)</option></select></label>
   <label class="switch">Languages
@@ -330,7 +332,7 @@ var QRelay = (function () {
   // ---------- encrypted relay ----------
   function Relay(o) {
     var self = this;
-    self.o = o; self.role = o.role; self.peer = o.role === 'pc' ? 'phone' : 'pc';
+    self.o = o; self.role = o.role; self.peer = o.peer || (o.role === 'pc' ? 'phone' : 'pc');
     self.base = 'qfd/' + o.topic + '/';
     self.seen = []; self.peerOnline = {}; self.lastStateTs = 0;
     self.keyP = crypto.subtle.importKey('raw', unb64u(o.key), 'AES-GCM', false, ['encrypt', 'decrypt']);
@@ -546,38 +548,42 @@ var QParse = (function () {
 
   // ---------- which queue / type of service ----------
   var FA_SAY = /financial aid|ayuda financiera|\bbecas?\b|pr[eé]stamo|reembolso|veterano|hazlewood|foster care|fire science|law enforcement|\bpow\b|prisoner of war|\bfafsa\b|\btasfa\b|\bpell\b|\bgrants?\b|\bloans?\b|scholarship|refund|disburs|verification|\baward|\bsap\b|work.?study|veteran|\bva\b|gi bill|military|hazlewood|\bmoney\b|pay for (?:school|college|classes)/g;
-  var ENR_SAY = /senior citizen|65 (?:or|and) older|highest.ranking|dual credit|tuition plan|inscrib|matr[ií]cul|consejer|asesor|solicitud|aplicar|\bclases\b|advis|admission|\bapply|application|\bdegree|\benroll|\bregist|transcript|\bhold\b|\bclass(?:es)?\b|residen|\btsi\b|graduat|\bdrop|withdraw|\bmajor\b|\bschedule/g;
+  var ENR_SAY = /senior citizen|65 (?:or|and) older|highest.ranking|dual credit|tuition plan|inscrib|matr[ií]cul|consejer|asesor|solicitud|aplicar|\bclases\b|advis|admission|\bapply|application|\bdegree|\benroll|\bregist|transcript|\bhold\b|\bclass(?:es)?\b|residen|\btsi\b|graduat|\bdrop|withdraw|\bmajor\b|\bschedule|mening|vaccin|immuniz|\bshots?\b|international|\bf-?1\b|i-?20|\bvisa\b|placement test/g;
+  // Wylie "Type of Service" lists (Oct 2026):
+  //   Enrollment Services: Hold on Account, Residency, Degree Plan, International, Immunization, Testing Referral, Other
+  //   Financial Aid & Veteran Services: Financial Aid, Veteran Services
+  // svc = which service name a group belongs to; say = what students say; w = weight (specific beats generic).
   var GROUPS = [
-    { svc: /degree|audit|graduat|\bplan\b/, say: /degree plan|degree audit|graduat|what classes|which classes|classes (?:i|do i) need|transfer plan|\bdegree\b|\bmajor\b/g },
-    { svc: /advis|counsel/, say: /advis|counsel|classes to take|pick (?:my )?classes|meet with (?:someone|an? )|talk to (?:someone|an? )/g },
-    { svc: /admiss|new student|apply|applica/, say: /admission|\bapply|application|applied|new student|first time|get started|accepted|\badmit/g },
-    { svc: /hold/, say: /\bhold\b|blocked|can'?t register|cannot register|won'?t let me register/g },
-    { svc: /regist|enroll|add|drop|withdraw|schedul/, say: /\bregist|\benroll|sign up for|add (?:a )?class|\bdrop|withdraw|waitlist|wait list|\bschedule\b/g },
-    { svc: /transcript|record/, say: /transcript|\brecords?\b/g },
-    { svc: /residen|tuition/, say: /residen|in.state|out.of.state|tuition rate/g },
-    { svc: /test|tsi|placement/, say: /\btsi\b|placement|\btest/g },
-    { svc: /fafsa|tasfa/, say: /\bfafsa\b|\btasfa\b|free application/g },
-    { svc: /verif|document/, say: /verif|document|tax return|\bupload/g },
-    { svc: /schol/, say: /scholarship/g },
-    { svc: /loan/, say: /\bloans?\b/g },
-    { svc: /refund|disburs|payment|award|status|check/, say: /refund|disburs|\bmoney\b|\bawards?\b|when (?:do|will|does) (?:i|my)|\bpell\b|\bgrants?\b|\bstatus\b/g },
-    { svc: /\bsap\b|appeal|probation|suspen|satisf/, say: /\bsap\b|appeal|satisfactory|probation|suspen/g },
-    { svc: /veteran|\bva\b|military|\bgi\b/, say: /veteran|\bva\b|military|gi bill|\barmy\b|\bnavy\b|marine|air force|chapter 3[13]|hazlewood/g },
-    { svc: /work.?study/, say: /work.?study/g }
+    { svc: /immuniz/, w: 3, say: /mening|vaccin|immuniz|\bshots?\b|med\s*\+?\s*proctor|bacterial/g },
+    { svc: /residen/, w: 3, say: /residen|in.state|out.of.state|tuition rate|green card|permanent resident|ad valorem|proof of residency/g },
+    { svc: /international/, w: 3, say: /international|\bf-?1\b|i-?20|student visa|\bvisa\b|sevis|\biso\b|foreign student/g },
+    { svc: /test/, w: 3, say: /\btsi\b|placement|\btest(?:ing)?\b|accuplacer|testing center/g },
+    { svc: /hold/, w: 2, say: /\bhold\b|blocked|can'?t register|cannot register|won'?t let me register|not letting me register/g },
+    { svc: /degree|audit|graduat|\bplan\b/, w: 2, say: /degree plan|degree audit|graduat|what classes|which classes|classes (?:i|do i) need|transfer plan|\bdegree\b|\bmajor\b|advis|counsel|pick (?:my )?classes|my schedule|classes for (?:next|spring|summer|fall)/g },
+    { svc: /veteran|\bva\b|military/, w: 3, say: /veteran|\bva\b|military|gi bill|\barmy\b|\bnavy\b|marine|air force|chapter 3[13]|hazlewood|dd.?214|veterano/g },
+    { svc: /financial aid/, w: 1, say: /financial aid|ayuda financiera|\bfafsa\b|\btasfa\b|\bpell\b|\bgrants?\b|\bloans?\b|scholarship|\bbecas?\b|refund|disburs|verification|\bawards?\b|\bsap\b|work.?study/g }
   ];
   function count(re, text) { re.lastIndex = 0; var m = text.match(re); return m ? m.length : 0; }
-  var STOPWORDS = /^(and|the|for|with|from|services?|campus|wylie|other|general)$/;
+  var STOPWORDS = /^(and|the|for|with|from|services?|campus|wylie|other|general|referral|account)$/;
 
   function scoreService(name, text) {
     var n = name.toLowerCase(), s = 0;
-    GROUPS.forEach(function (g) { if (g.svc.test(n)) s += count(g.say, text) * 2; });
+    GROUPS.forEach(function (g) { if (g.svc.test(n)) s += count(g.say, text) * g.w; });
     n.split(/[^a-z]+/).forEach(function (w) {
       if (w.length >= 4 && !STOPWORDS.test(w) && new RegExp('\\b' + w.slice(0, Math.max(4, w.length - 2))).test(text)) s += 1;
     });
     return s;
   }
+  // When the queue is clear but nothing names a specific service, still pick one so hands-free can finish:
+  // "Other" if the queue has it, else the generic one ("Financial Aid"), else the first.
+  function fallbackService(q) {
+    var list = q.services || [];
+    var pick = list.filter(function (s) { return /^other$/i.test(s.name); })[0] ||
+      list.filter(function (s) { return /financial aid/i.test(s.name); })[0] || list[0];
+    return pick ? pick.id : null;
+  }
 
-  // queues: [{id, name, services:[{id, name}]}] -> {queueId, serviceId}
+  // queues: [{id, name, services:[{id, name}]}] -> {queueId, serviceId, guessed}
   function classify(text, queues) {
     text = (text || '').toLowerCase();
     var fa = count(FA_SAY, text), enr = count(ENR_SAY, text), best = null;
@@ -588,9 +594,12 @@ var QParse = (function () {
         if (sc > 0 && (!bestSvc || sc > bestSvc.score)) bestSvc = { id: s.id, score: sc };
       });
       var total = qs + (bestSvc ? bestSvc.score : 0);
-      if (total > 0 && (!best || total > best.score)) best = { queueId: q.id, serviceId: bestSvc ? bestSvc.id : null, score: total };
+      if (total > 0 && (!best || total > best.score)) best = { queueId: q.id, serviceId: bestSvc ? bestSvc.id : null, score: total, q: q };
     });
-    return best || {};
+    if (!best) return {};
+    if (best.serviceId == null) { best.serviceId = fallbackService(best.q); best.guessed = true; }
+    delete best.q;
+    return best;
   }
 
   // Hands-free voice commands (said by you, the desk worker).
@@ -831,8 +840,40 @@ var QKB = (function () {
       .map(function (w) { return w.length > 3 && /[^s]s$/.test(w) ? w.slice(0, -1) : w; }).join(' ') + ' ';
   }
 
+  // ---------- walking directions from the Campus Commons front desk ----------
+  var FLOOR = ['', '1st', '2nd', '3rd', '4th'];
+  var SC_ROUTE = 'Go around this corner, then out the double doors to the building behind us — that\'s the Student Center';
+  function route(b, floor, room) {
+    var f = FLOOR[floor] || '';
+    if (b === 'CC') {
+      if (floor === 1) return 'Right here in this building (Campus Commons), this floor — room ' + room + '.';
+      if (floor === 2) return 'Upstairs — 2nd floor of this building (Campus Commons), room ' + room + (/^20\d/.test(room) ? ', basically right above us.' : '.');
+      return f + ' floor of this building (Campus Commons), room ' + room + '.';
+    }
+    if (b === 'SC') return SC_ROUTE + (floor > 1 ? '; ' + f + ' floor, room ' + room + '.' : '; room ' + room + ' on the ground floor.');
+    if (b === 'L') return 'Library building (WLB)' + (kb && kb.libraryRoute ? ' — ' + kb.libraryRoute : '') + '; ' + (floor > 1 ? f + ' floor, ' : 'ground floor, ') + 'room ' + room + '.';
+    return '';
+  }
+  // "WSC 330", "SC-330", "CC 215F", "WLB 206", "library 206", "student center 113", "campus commons 2 15"
+  var ROOM_RE = /\b(w?cc|w?sc|wlb|campus commons|student center|library)[\s-]*([1-3])\s*(\d\d)([a-f])?\b/i;
+  function roomCard(text) {
+    var m = ROOM_RE.exec(String(text || '').split(/\s+/).slice(-30).join(' '));
+    if (!m) return null;
+    var k = m[1].toLowerCase().replace(/^w(?=cc|sc)/, '');
+    var b = /cc|commons/.test(k) ? 'CC' : /sc|student/.test(k) ? 'SC' : 'L';
+    var room = m[2] + m[3] + (m[4] || '').toUpperCase(), floor = Number(m[2]);
+    var name = { CC: 'Campus Commons', SC: 'Student Center', L: 'Library' }[b];
+    return { id: 'room:' + b + room, kind: 'place', title: name + ' ' + room, say: route(b, floor, room), facts: [], queue: null };
+  }
+  function today() { var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+  var WHERE_RE = /\b(where|wheres|how do i get|how do i find|how to get|location|located|which building|what building|what room|donde|dónde)\b/i;
+
   function load(data) {
     kb = data; index = [];
+    (kb.places || []).forEach(function (pl) {
+      kb.cards.push({ id: 'place-' + pl.id, kind: 'place', title: pl.name + (pl.room && pl.b !== 'off' ? ' — ' + (pl.b === 'L' ? 'Library ' : pl.b + ' ') + pl.room : ''),
+        say: pl.say || route(pl.b, pl.floor, pl.room), facts: pl.facts || [], triggers: pl.triggers, until: pl.until });
+    });
     (kb.cards || []).forEach(function (c) {
       index.push({ card: c, triggers: (c.triggers || []).map(function (t) { return norm(t); }) });
     });
@@ -866,20 +907,25 @@ var QKB = (function () {
   function match(text, max, opts) {
     if (!kb) return [];
     var skip = opts && opts.skip;
-    var all = norm(text), recent = norm(String(text || '').split(/\s+/).slice(-25).join(' '));
-    var scored = [];
+    var all = norm(text), recentRaw = String(text || '').split(/\s+/).slice(-25).join(' '), recent = norm(recentRaw);
+    var asking = WHERE_RE.test(recentRaw), now = today(), scored = [];
     index.forEach(function (e) {
+      if (e.card.until && e.card.until < now) return;
       var s = 0;
       e.triggers.forEach(function (t) {
         if (all.indexOf(t) >= 0) s += t.length > 12 ? 3 : 2;
         if (recent.indexOf(t) >= 0) s += 1;
       });
-      if (s && !(skip && skip.test(e.card.id))) scored.push({ s: s + (e.card.priority || 0), card: e.card });
+      if (e.card.kind === 'place' && s) s += asking ? 6 : -1; // "where is…" -> directions first
+      if (s > 0 && !(skip && skip.test(e.card.id))) scored.push({ s: s + (e.card.priority || 0), card: e.card });
     });
+    var rc = roomCard(text);
+    if (rc) scored.push({ s: 100, card: rc });
     scored.sort(function (a, b) { return b.s - a.s; });
     return scored.slice(0, max || 2).map(function (x) { return render(x.card); });
   }
   function byId(id) {
+    if (/^room:/.test(id)) { var m = /^room:(CC|SC|L)(\d)(\d\d[A-F]?)$/.exec(id); return m ? roomCard({ CC: 'CC ', SC: 'SC ', L: 'library ' }[m[1]] + m[2] + m[3]) : null; }
     var e = index.filter(function (x) { return x.card.id === id; })[0];
     return e ? render(e.card) : null;
   }
@@ -933,7 +979,7 @@ var QKB = (function () {
   var form, manual, committed, session, focus, pendingAdd, lastSynced, autoCancelled, studentStart, lastTipSig;
   var settings = {
     autoAdd: store.get('autoAdd', true), engine: store.get('engine', 'deepgram'), language: store.get('language', 'multi'),
-    boost: store.get('boost', 3), skipSilence: store.get('skipSilence', true)
+    boost: store.get('boost', 3), skipSilence: store.get('skipSilence', true), countdown: store.get('countdown', 1)
   };
   function reset() {
     form = { queueId: null, serviceId: null, phone: '', name: '', cwid: '', note: '' };
@@ -1111,8 +1157,10 @@ var QKB = (function () {
     return q ? q.services : [];
   }
   function canAdd() { return pcOnline && form.queueId != null && form.phone.length === 10 && !pendingAdd; }
+  // Returning students (CWID on file) go instantly; new students wait for their CWID ("go ahead" adds without one).
   function readyForAuto() {
-    return canAdd() && knownName() && (form.serviceId != null || queueServices().length < 2) && lookupFor() && !autoCancelled;
+    var lk = lookupFor();
+    return canAdd() && knownName() && (form.serviceId != null || queueServices().length < 2) && lk && (form.cwid || lk.cwid) && !autoCancelled;
   }
   function sendAdd() {
     clearInterval(autoTimer); autoTimer = null;
@@ -1130,7 +1178,8 @@ var QKB = (function () {
     if (autoTimer && sig === autoSig) return; // already counting for exactly this form
     autoSig = sig;
     clearInterval(autoTimer);
-    autoLeft = 3;
+    if (!settings.countdown) { sendAdd(); return; }
+    autoLeft = settings.countdown;
     autoTimer = setInterval(function () {
       autoLeft--;
       if (autoLeft <= 0) sendAdd(); else { renderAdd(); sendLive(); }
@@ -1239,7 +1288,7 @@ var QKB = (function () {
     lastTipSig = sig; box.innerHTML = '';
     cards.forEach(function (c) {
       var d = document.createElement('div'); d.className = 'tip';
-      var b = document.createElement('b'); b.textContent = (c.kind === 'staff' ? '👤 ' : '💡 ') + c.title; d.appendChild(b);
+      var b = document.createElement('b'); b.textContent = ({ staff: '👤 ', place: '📍 ' }[c.kind] || '💡 ') + c.title; d.appendChild(b);
       if (c.say) { var s = document.createElement('div'); s.className = 'say'; s.textContent = c.say; d.appendChild(s); }
       if (c.facts.length) {
         var ul = document.createElement('ul');
@@ -1303,7 +1352,7 @@ var QKB = (function () {
   };
   $('#next').onclick = function () { nextStudent(true); };
   $('#settingsBtn').onclick = function () {
-    $('#autoAdd').checked = settings.autoAdd; $('#engine').value = settings.engine; $('#language').value = settings.language;
+    $('#autoAdd').checked = settings.autoAdd; $('#countdown').value = String(settings.countdown); $('#engine').value = settings.engine; $('#language').value = settings.language;
     $('#boost').value = settings.boost; $('#boostVal').textContent = settings.boost + '×'; $('#skipSilence').checked = settings.skipSilence;
     $('#dgKey').value = cfg.dgKey || ''; renderEngineInfo();
     $('#settings').showModal();
@@ -1312,6 +1361,7 @@ var QKB = (function () {
   function setSetting(k, v, restart) { settings[k] = v; store.set(k, v); if (restart) restartEngine(); }
   $('#autoAdd').onchange = function (e) { setSetting('autoAdd', e.target.checked); maybeAutoAdd(); };
   $('#engine').onchange = function (e) { setSetting('engine', e.target.value, true); };
+  $('#countdown').onchange = function (e) { setSetting('countdown', Number(e.target.value)); };
   $('#language').onchange = function (e) { setSetting('language', e.target.value, true); };
   $('#skipSilence').onchange = function (e) { setSetting('skipSilence', e.target.checked, true); };
   $('#boost').oninput = function (e) { var v = Number(e.target.value); setSetting('boost', v); $('#boostVal').textContent = v + '×'; if (engine) engine.setBoost(v); };

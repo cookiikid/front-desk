@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Qless Front Desk Assistant
 // @namespace    qless-front-desk
-// @version      2.0.0
+// @version      2.1.0
 // @description  Hands-free iPhone voice check-in, live assistant tips, CWID auto-fill, shortcuts and a daily counter for Qless
 // @match        *://merchant.qless.com/*
 // @require      https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js
@@ -164,7 +164,7 @@
     // ---------- encrypted relay ----------
     function Relay(o) {
       var self = this;
-      self.o = o; self.role = o.role; self.peer = o.role === 'pc' ? 'phone' : 'pc';
+      self.o = o; self.role = o.role; self.peer = o.peer || (o.role === 'pc' ? 'phone' : 'pc');
       self.base = 'qfd/' + o.topic + '/';
       self.seen = []; self.peerOnline = {}; self.lastStateTs = 0;
       self.keyP = crypto.subtle.importKey('raw', unb64u(o.key), 'AES-GCM', false, ['encrypt', 'decrypt']);
@@ -254,8 +254,40 @@
         .map(function (w) { return w.length > 3 && /[^s]s$/.test(w) ? w.slice(0, -1) : w; }).join(' ') + ' ';
     }
   
+    // ---------- walking directions from the Campus Commons front desk ----------
+    var FLOOR = ['', '1st', '2nd', '3rd', '4th'];
+    var SC_ROUTE = 'Go around this corner, then out the double doors to the building behind us — that\'s the Student Center';
+    function route(b, floor, room) {
+      var f = FLOOR[floor] || '';
+      if (b === 'CC') {
+        if (floor === 1) return 'Right here in this building (Campus Commons), this floor — room ' + room + '.';
+        if (floor === 2) return 'Upstairs — 2nd floor of this building (Campus Commons), room ' + room + (/^20\d/.test(room) ? ', basically right above us.' : '.');
+        return f + ' floor of this building (Campus Commons), room ' + room + '.';
+      }
+      if (b === 'SC') return SC_ROUTE + (floor > 1 ? '; ' + f + ' floor, room ' + room + '.' : '; room ' + room + ' on the ground floor.');
+      if (b === 'L') return 'Library building (WLB)' + (kb && kb.libraryRoute ? ' — ' + kb.libraryRoute : '') + '; ' + (floor > 1 ? f + ' floor, ' : 'ground floor, ') + 'room ' + room + '.';
+      return '';
+    }
+    // "WSC 330", "SC-330", "CC 215F", "WLB 206", "library 206", "student center 113", "campus commons 2 15"
+    var ROOM_RE = /\b(w?cc|w?sc|wlb|campus commons|student center|library)[\s-]*([1-3])\s*(\d\d)([a-f])?\b/i;
+    function roomCard(text) {
+      var m = ROOM_RE.exec(String(text || '').split(/\s+/).slice(-30).join(' '));
+      if (!m) return null;
+      var k = m[1].toLowerCase().replace(/^w(?=cc|sc)/, '');
+      var b = /cc|commons/.test(k) ? 'CC' : /sc|student/.test(k) ? 'SC' : 'L';
+      var room = m[2] + m[3] + (m[4] || '').toUpperCase(), floor = Number(m[2]);
+      var name = { CC: 'Campus Commons', SC: 'Student Center', L: 'Library' }[b];
+      return { id: 'room:' + b + room, kind: 'place', title: name + ' ' + room, say: route(b, floor, room), facts: [], queue: null };
+    }
+    function today() { var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+    var WHERE_RE = /\b(where|wheres|how do i get|how do i find|how to get|location|located|which building|what building|what room|donde|dónde)\b/i;
+  
     function load(data) {
       kb = data; index = [];
+      (kb.places || []).forEach(function (pl) {
+        kb.cards.push({ id: 'place-' + pl.id, kind: 'place', title: pl.name + (pl.room && pl.b !== 'off' ? ' — ' + (pl.b === 'L' ? 'Library ' : pl.b + ' ') + pl.room : ''),
+          say: pl.say || route(pl.b, pl.floor, pl.room), facts: pl.facts || [], triggers: pl.triggers, until: pl.until });
+      });
       (kb.cards || []).forEach(function (c) {
         index.push({ card: c, triggers: (c.triggers || []).map(function (t) { return norm(t); }) });
       });
@@ -289,20 +321,25 @@
     function match(text, max, opts) {
       if (!kb) return [];
       var skip = opts && opts.skip;
-      var all = norm(text), recent = norm(String(text || '').split(/\s+/).slice(-25).join(' '));
-      var scored = [];
+      var all = norm(text), recentRaw = String(text || '').split(/\s+/).slice(-25).join(' '), recent = norm(recentRaw);
+      var asking = WHERE_RE.test(recentRaw), now = today(), scored = [];
       index.forEach(function (e) {
+        if (e.card.until && e.card.until < now) return;
         var s = 0;
         e.triggers.forEach(function (t) {
           if (all.indexOf(t) >= 0) s += t.length > 12 ? 3 : 2;
           if (recent.indexOf(t) >= 0) s += 1;
         });
-        if (s && !(skip && skip.test(e.card.id))) scored.push({ s: s + (e.card.priority || 0), card: e.card });
+        if (e.card.kind === 'place' && s) s += asking ? 6 : -1; // "where is…" -> directions first
+        if (s > 0 && !(skip && skip.test(e.card.id))) scored.push({ s: s + (e.card.priority || 0), card: e.card });
       });
+      var rc = roomCard(text);
+      if (rc) scored.push({ s: 100, card: rc });
       scored.sort(function (a, b) { return b.s - a.s; });
       return scored.slice(0, max || 2).map(function (x) { return render(x.card); });
     }
     function byId(id) {
+      if (/^room:/.test(id)) { var m = /^room:(CC|SC|L)(\d)(\d\d[A-F]?)$/.exec(id); return m ? roomCard({ CC: 'CC ', SC: 'SC ', L: 'library ' }[m[1]] + m[2] + m[3]) : null; }
       var e = index.filter(function (x) { return x.card.id === id; })[0];
       return e ? render(e.card) : null;
     }
@@ -367,7 +404,7 @@
   setTimeout(function waitForQless() { if (ready()) init(); else setTimeout(waitForQless, 300); }, 0);
 
   var acvm, relay, pairing, currentLookup = null, last = null, remoteBusy = false, remoteAdding = false, panel, pill, toastBox, liveBox;
-  var live = null, liveAt = 0;
+  var live = null, liveAt = 0, team = [], teamAt = 0, deskRelay = null;
 
   // One-time setup link: https://merchant.qless.com/cec/#qfd-setup=<base64url JSON {kbKey, me, dgKey}>
   function readSetupLink() {
@@ -378,6 +415,7 @@
       if (s.kbKey) store.set('kbKey', s.kbKey);
       if (s.me) store.set('me', s.me);
       if (s.dgKey) store.set('dgKey', s.dgKey);
+      if (s.desk) store.set('desk', s.desk);
       history.replaceState(null, '', location.pathname + location.search);
       setTimeout(function () { toast('✅ Front Desk setup saved'); }, 1500);
     } catch (e) { log('bad setup link', e); }
@@ -520,6 +558,16 @@
       onStatus: function () { renderPill(); renderLive(); }
     });
     setTimeout(function () { publishState(true); }, 1500);
+    startDesk();
+  }
+  // Who's available, from the Jabber helper running on this PC (desk/desk-agent.js).
+  function startDesk() {
+    var d = store.get('desk', null);
+    if (!d || deskRelay) return;
+    deskRelay = new QRelay.Relay({
+      topic: d.topic, key: d.key, role: 'pc', peer: 'desk',
+      onMessage: function (m) { if (m.t === 'presence') { team = m.people || []; teamAt = Date.now(); renderLive(); if (panel && !panel.hidden) renderPanel(); } }
+    });
   }
   function onPhoneMessage(m) {
     if (m.t === 'hello') { publishState(true); sendConfig(); }
@@ -697,9 +745,14 @@
       '#qfd-live .lk{margin:0 12px 8px;padding:7px 10px;border-radius:8px;font-size:13px}#qfd-live .lk.known{background:#e5f5eb;color:#1f7a40}#qfd-live .lk.new{background:#fbf0dc;color:#8a5a08}',
       '#qfd-live .tip{margin:0 12px 10px;padding:9px 11px;border-radius:8px;background:#fff8e6;border:1px solid #f0d9a0}',
       '#qfd-live .tip b{display:block;margin-bottom:3px;font-size:13.5px}#qfd-live .tip .say{font-size:14px;color:#111}',
+      '#qfd-live .tip.place{background:#e8f4fb;border-color:#a9d4ee}#qfd-live .tip.place .say{font-size:15px;font-weight:bold}',
       '#qfd-live .tip ul{margin:5px 0 0;padding-left:17px;color:#555;font-size:12.5px}',
       '#qfd-live .up{padding:6px 12px 10px;color:#666;font-size:12px;border-top:1px solid #eee}#qfd-live .up div{padding:1px 0}',
       '#qfd-live.min .body{display:none}',
+      '#qfd-live .team{margin:0 12px 10px;padding:8px 10px;border-radius:8px;background:#f5f7f9;border:1px solid #e3e6ea}',
+      '#qfd-live .pp,#qfd-panel .pp{display:flex;align-items:center;gap:6px;padding:3px 0}',
+      '.pp .pd{width:8px;height:8px;border-radius:50%;flex:0 0 8px}.pp .pn{font-weight:bold}.pp .pm{color:#888;font-size:12px;flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}',
+      '.pp a,#qfd-live a.boss{text-decoration:none;background:#1a9ad6;color:#fff;border-radius:6px;padding:1px 7px;font-size:12px;font-weight:normal}',
       '.qfd-toast{background:#333;color:#fff;padding:8px 12px;border-radius:6px;font:13px Arial,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.25);transition:opacity .4s}'
     ].join('\n');
     document.head.appendChild(css);
@@ -732,6 +785,7 @@
       '<div style="margin-top:6px"><button id="qfd-pair">Show pairing QR</button><button class="grey" id="qfd-repair">New key</button></div>' +
       '<div id="qfd-pairbox" hidden><div id="qfd-qr"></div><div id="qfd-link"></div>' +
       '<div style="font-size:11px;color:#888;margin-top:4px">Scan with the iPhone camera, open in Safari. Anyone with this link can fill this form — keep it private.</div></div></section>' +
+      teamPanelHtml() +
       '<section><h4>Today · ' + s.total + ' students</h4><table>' + (rows || '<tr><td style="color:#999">Nobody yet</td><td></td></tr>') + '</table>' +
       '<div style="margin-top:6px"><button class="grey" id="qfd-reset">Reset today</button></div></section>' +
       '<section><h4>Shortcuts</h4>' + qs + '<div><kbd>Ctrl+Enter</kbd> Add (submit)</div><div><kbd>Esc</kbd> Stop the auto-add countdown / close the form</div>' +
@@ -752,18 +806,57 @@
     panel.querySelector('#qfd-me').onchange = function (e) { store.set('me', e.target.value.trim()); sendConfig(); };
   }
   // ---------- live assistant overlay (captions, detected fields, countdown, tips) ----------
+  var STATE_DOT = { available: '#2db34a', busy: '#e5484d', away: '#e8a317', offline: '#bbb' };
+  var STATE_RANK = { available: 0, away: 1, busy: 2, offline: 3 };
+  function groupsFor(tips) {
+    var q = live && live.fields && live.fields.queueId != null && vm.queuesWS && vm.queuesWS.getQueueById(Number(live.fields.queueId));
+    var qn = q ? String(ko.unwrap(q.description)) : '', text = (live && live.text || '').toLowerCase(), g = [];
+    var ids = (tips || []).map(function (c) { return c.id + ' ' + c.title; }).join(' ').toLowerCase();
+    if (/veteran|gi bill|hazlewood|\bva\b/.test(text + ids)) g.push('Veterans');
+    if (/financ/i.test(qn) || /fafsa|financial aid|refund|scholarship|verification/.test(ids)) g.push('Financial Aid');
+    if (/testing|tsi|placement/.test(ids + text)) g.push('Testing');
+    if (/registrar|transcript|residency|graduat/.test(ids)) g.push('Registrar');
+    if (/access|disabilit|counsel/.test(ids + text)) g.push('Access, Counseling, Dean of Students');
+    if (/career/.test(ids + text)) g.push('Career Center');
+    if (/police|emergency/.test(ids + text)) g.push('Police');
+    if (/enroll/i.test(qn) || /advis|degree plan|hold/.test(ids + text) || !g.length) g.push('Advising');
+    return g;
+  }
+  function personRow(p) {
+    var call = p.ext ? '<a href="ciscotel:' + esc(p.ext) + '" title="Call ' + esc(p.name) + ' in Jabber">📞 ' + esc(p.ext) + '</a>' : '';
+    var im = '<a href="ciscoim:' + esc(p.jid) + '" title="Message ' + esc(p.name) + ' in Jabber">💬</a>';
+    return '<div class="pp"><span class="pd" style="background:' + (STATE_DOT[p.state] || '#bbb') + '"></span><span class="pn">' + esc(p.name) + '</span>' +
+      '<span class="pm">' + esc(p.msg && p.msg !== '@' + p.ext ? p.msg : p.state === 'available' ? '' : p.state) + '</span>' + call + im + '</div>';
+  }
+  function teamHtml(tips) {
+    if (!team.length) return '';
+    var groups = groupsFor(tips), h = '';
+    groups.slice(0, 2).forEach(function (g) {
+      var list = team.filter(function (p) { return p.groups.indexOf(g) >= 0; })
+        .sort(function (a, b) { return STATE_RANK[a.state] - STATE_RANK[b.state] || a.name.localeCompare(b.name); });
+      if (!list.length) return;
+      var free = list.filter(function (p) { return p.state === 'available'; }).length;
+      var shown = list.filter(function (p) { return p.state !== 'offline'; }).slice(0, 5);
+      h += '<div class="team"><b>' + esc(g) + '</b> <span style="color:#888">· ' + free + ' available</span>' + shown.map(personRow).join('') + '</div>';
+    });
+    return h;
+  }
+  function bossLink() {
+    var b = team.filter(function (p) { return /alicia phillips/i.test(p.name); })[0];
+    return b ? '<a class="boss" href="ciscoim:' + esc(b.jid) + '" title="Message ' + esc(b.name) + ' in Jabber" onclick="event.stopPropagation()">💬 Alicia</a>' : '';
+  }
   var LANG_NAMES = { es: 'Spanish', fr: 'French', de: 'German', hi: 'Hindi', ru: 'Russian', pt: 'Portuguese', ja: 'Japanese', it: 'Italian', nl: 'Dutch', vi: 'Vietnamese', zh: 'Chinese', ko: 'Korean', ar: 'Arabic' };
   function renderLive() {
     if (!liveBox) return;
     var st = relay ? relay.status() : { peerOnline: false };
     var fresh = live && Date.now() - liveAt < 60000;
-    liveBox.hidden = !st.peerOnline && !fresh;
+    liveBox.hidden = !st.peerOnline && !fresh && !team.length;
     if (liveBox.hidden) return;
     var speaking = live && Date.now() - liveAt < 4000 && live.text;
     var h = '<div class="hd" id="qfd-live-hd"><span class="dot' + (speaking ? ' on' : '') + '"></span>' +
       (speaking ? 'Listening' : 'iPhone ready') +
       (live && live.lang && live.lang !== 'en' ? ' <span class="lang">🌐 ' + esc(LANG_NAMES[live.lang] || live.lang) + '</span>' : '') +
-      '<span style="margin-left:auto;font-weight:normal;color:#888">' + (liveBox.classList.contains('min') ? '▸' : '▾') + '</span></div><div class="body">';
+      '<span style="margin-left:auto;font-weight:normal;color:#888">' + bossLink() + ' ' + (liveBox.classList.contains('min') ? '▸' : '▾') + '</span></div><div class="body">';
     if (live && live.text) {
       var words = live.text.split(/\s+/), cut = Math.max(0, words.length - 14);
       h += '<div class="cap"><div>' + esc(words.slice(0, cut).join(' ')) + ' <b>' + esc(words.slice(cut).join(' ')) + '</b></div></div>';
@@ -784,14 +877,25 @@
     if (live && live.countdown) h += '<div class="cd">Adding in ' + live.countdown + '… &nbsp;<span style="font-weight:normal">Esc or say "stop" to cancel</span></div>';
     var tips = (live && live.tips || []).map(function (id) { return QKB.byId(id); }).filter(Boolean);
     tips.forEach(function (c) {
-      h += '<div class="tip"><b>' + (c.kind === 'staff' ? '👤 ' : '💡 ') + esc(c.title) + '</b>' + (c.say ? '<div class="say">' + esc(c.say) + '</div>' : '') +
+      h += '<div class="tip' + (c.kind === 'place' ? ' place' : '') + '"><b>' + ({ staff: '👤 ', place: '📍 ' }[c.kind] || '💡 ') + esc(c.title) + '</b>' + (c.say ? '<div class="say">' + esc(c.say) + '</div>' : '') +
         (c.facts.length ? '<ul>' + c.facts.slice(0, 4).map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' : '') + '</div>';
     });
+    h += teamHtml(tips);
     var up = QKB.loaded() ? QKB.upcoming(14) : [];
     if (up.length && !tips.length) h += '<div class="up"><b>Coming up</b>' + up.slice(0, 4).map(function (d) { return '<div>' + esc(QKB.fmtDate(d.date)) + ' — ' + esc(d.label) + '</div>'; }).join('') + '</div>';
     h += '</div>';
     liveBox.innerHTML = h;
     liveBox.querySelector('#qfd-live-hd').onclick = function () { liveBox.classList.toggle('min'); store.set('liveMin', liveBox.classList.contains('min')); renderLive(); };
+  }
+
+  function teamPanelHtml() {
+    if (!team.length) return '<section><h4>Jabber</h4><div style="color:#888">Jabber helper not connected — it starts with Windows (desk\\start-hidden.vbs).</div></section>';
+    var groups = [];
+    team.forEach(function (p) { p.groups.forEach(function (g) { if (groups.indexOf(g) < 0) groups.push(g); }); });
+    return '<section><h4>Jabber · this desk is ext 8443</h4>' + groups.sort().map(function (g) {
+      var list = team.filter(function (p) { return p.groups.indexOf(g) >= 0; }).sort(function (a, b) { return STATE_RANK[a.state] - STATE_RANK[b.state] || a.name.localeCompare(b.name); });
+      return '<div style="margin-top:6px;font-weight:bold">' + esc(g) + '</div>' + list.map(personRow).join('');
+    }).join('') + '</section>';
   }
 
   function showQr() {
