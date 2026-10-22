@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#0b5ea8">
+<title>Check in — Collin College Wylie</title>
+<style>
+  :root { --bg: #f3f6fa; --card: #fff; --text: #17202a; --muted: #5f6b78; --line: #dbe2ea; --brand: #0b5ea8; --ok: #1f9d4c; --bad: #c0392b; color-scheme: light; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #11161c; --card: #1b222b; --text: #e8edf2; --muted: #9aa7b4; --line: #2c3540; --brand: #3d8fdb; color-scheme: dark; } }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 17px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    padding: calc(env(safe-area-inset-top) + 16px) 16px calc(env(safe-area-inset-bottom) + 24px); }
+  .wrap { max-width: 520px; margin: 0 auto; }
+  header { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 14px; }
+  h1 { font-size: 23px; margin: 0; } .sub { color: var(--muted); font-size: 15px; margin-top: 2px; }
+  .lang { border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 18px; padding: 6px 12px; font: inherit; font-size: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px; margin-bottom: 14px; }
+  h2 { font-size: 16px; margin: 0 0 10px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .opt { border: 1px solid var(--line); background: var(--bg); color: var(--text); border-radius: 12px; padding: 12px 10px; font: inherit; font-size: 15px; text-align: left; min-height: 54px; }
+  .opt small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .opt.sel { border-color: var(--brand); background: var(--brand); color: #fff; } .opt.sel small { color: #dce9f7; }
+  label { display: block; font-weight: 600; font-size: 14px; margin: 12px 0 6px; } label:first-of-type { margin-top: 0; }
+  input, textarea { width: 100%; font: inherit; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); color: var(--text); }
+  textarea { min-height: 70px; resize: vertical; }
+  .hint { color: var(--muted); font-size: 13px; margin-top: 5px; }
+  .err { color: var(--bad); font-size: 14px; margin-top: 8px; min-height: 18px; }
+  button.go { width: 100%; border: 0; border-radius: 14px; background: var(--brand); color: #fff; font: inherit; font-weight: 700; font-size: 18px; padding: 16px; }
+  button.go:disabled { opacity: .5; }
+  .legal { color: var(--muted); font-size: 12px; margin-top: 10px; }
+  .done { text-align: center; padding: 40px 10px; } .done .big { font-size: 56px; } .done h2 { font-size: 22px; }
+</style>
+</head>
+<body>
+<div class="wrap" id="app">
+  <header>
+    <div><h1 data-t="title">Check in</h1><div class="sub" data-t="sub">Student &amp; Enrollment Services · Financial Aid · Wylie Campus</div></div>
+    <button class="lang" id="lang">Español</button>
+  </header>
+  <form id="f" autocomplete="on">
+    <div class="card">
+      <h2 data-t="need">What do you need help with?</h2>
+      <div class="grid" id="opts"></div>
+    </div>
+    <div class="card">
+      <label for="phone" data-t="phone">Cell phone (we'll text you when it's your turn)</label>
+      <input id="phone" type="tel" inputmode="tel" autocomplete="tel-national" placeholder="972-555-1234" required>
+      <label for="name" data-t="name">Full name</label>
+      <input id="name" autocomplete="name" autocapitalize="words" required>
+      <label for="cwid" data-t="cwid">Collin student ID (CWID) — if you have one</label>
+      <input id="cwid" inputmode="text" autocapitalize="none" placeholder="e.g. 200012345">
+      <div class="hint" data-t="cwidHint">It's in your Collin welcome email. New to Collin? Leave it blank.</div>
+      <label for="note" data-t="note">Anything else? (optional)</label>
+      <textarea id="note" maxlength="200"></textarea>
+      <div class="err" id="err"></div>
+      <button class="go" id="go" type="submit" data-t="send">Check in</button>
+      <div class="legal" data-t="legal">By checking in you agree to receive text messages about your place in line from QLess. Reply STOP to opt out.</div>
+    </div>
+  </form>
+</div>
+<script>
+/* QRelay — tiny end-to-end encrypted pub/sub between the phone and the PC.
+ * Talks MQTT 3.1.1 over WebSocket to two free public brokers at once (redundancy),
+ * and AES-GCM encrypts every message with a key that only the phone + PC know,
+ * so the brokers only ever see random-looking ciphertext. */
+var QRelay = (function () {
+  'use strict';
+  var BROKERS = ['wss://broker.hivemq.com:8884/mqtt', 'wss://broker.emqx.io:8084/mqtt'];
+  var te = new TextEncoder(), td = new TextDecoder();
+
+  function b64u(bytes) {
+    var s = '';
+    for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  function unb64u(str) {
+    str = str.replace(/-/g, '+').replace(/_/g, '/');
+    while (str.length % 4) str += '=';
+    var s = atob(str), out = new Uint8Array(s.length);
+    for (var i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+    return out;
+  }
+  function rand(n) { return crypto.getRandomValues(new Uint8Array(n)); }
+  function newPairing() { return { topic: b64u(rand(12)), key: b64u(rand(32)) }; }
+  function encodePairing(p) { return p.topic + '.' + p.key; }
+  function decodePairing(s) {
+    var m = /^([A-Za-z0-9_-]{8,})\.([A-Za-z0-9_-]{43})$/.exec((s || '').trim());
+    return m ? { topic: m[1], key: m[2] } : null;
+  }
+
+  // ---------- minimal MQTT 3.1.1 packet codec ----------
+  function concat(arrs) {
+    var n = 0, i = 0;
+    arrs.forEach(function (a) { n += a.length; });
+    var o = new Uint8Array(n);
+    arrs.forEach(function (a) { o.set(a, i); i += a.length; });
+    return o;
+  }
+  function encStr(s) {
+    var b = typeof s === 'string' ? te.encode(s) : s;
+    return concat([new Uint8Array([b.length >> 8, b.length & 255]), b]);
+  }
+  function packet(type, body) {
+    var len = [], x = body.length;
+    do { var d = x % 128; x = Math.floor(x / 128); if (x > 0) d |= 128; len.push(d); } while (x > 0);
+    return concat([new Uint8Array([type]), new Uint8Array(len), body]);
+  }
+  function connectPkt(clientId, will) {
+    var flags = 0x02; // clean session
+    var parts = [encStr('MQTT'), new Uint8Array([4]), null, new Uint8Array([0, 30]), encStr(clientId)];
+    if (will) {
+      flags |= 0x04 | (will.retain ? 0x20 : 0);
+      parts.push(encStr(will.topic), encStr(will.payload));
+    }
+    parts[2] = new Uint8Array([flags]);
+    return packet(0x10, concat(parts));
+  }
+  function subscribePkt(id, topics) {
+    var parts = [new Uint8Array([id >> 8, id & 255])];
+    topics.forEach(function (t) { parts.push(encStr(t), new Uint8Array([0])); });
+    return packet(0x82, concat(parts));
+  }
+  function publishPkt(topic, payload, retain) {
+    return packet(0x30 | (retain ? 1 : 0), concat([encStr(topic), te.encode(payload)]));
+  }
+
+  // ---------- one broker connection with auto-reconnect ----------
+  function Conn(url, opts) {
+    this.url = url; this.opts = opts; this.ready = false; this.backoff = 1000;
+    this.buf = new Uint8Array(0); this.stopped = false;
+    this.open();
+  }
+  Conn.prototype.open = function () {
+    var self = this;
+    if (self.stopped) return;
+    var ws;
+    try { ws = new WebSocket(self.url, 'mqtt'); } catch (e) { return self.retry(); }
+    self.ws = ws; ws.binaryType = 'arraybuffer';
+    ws.onopen = function () {
+      self.buf = new Uint8Array(0);
+      ws.send(connectPkt('qfd' + b64u(rand(9)), self.opts.will));
+    };
+    ws.onmessage = function (ev) { self.feed(new Uint8Array(ev.data)); };
+    ws.onclose = function () { self.setReady(false); clearInterval(self.ping); self.retry(); };
+    ws.onerror = function () { try { ws.close(); } catch (e) {} };
+  };
+  Conn.prototype.retry = function () {
+    var self = this;
+    if (self.stopped || self.retryTimer) return;
+    self.retryTimer = setTimeout(function () { self.retryTimer = null; self.open(); }, self.backoff);
+    self.backoff = Math.min(self.backoff * 2, 15000);
+  };
+  Conn.prototype.setReady = function (r) {
+    if (this.ready !== r) { this.ready = r; this.opts.onReady(); }
+  };
+  Conn.prototype.feed = function (chunk) {
+    this.buf = concat([this.buf, chunk]);
+    for (;;) {
+      var b = this.buf;
+      if (b.length < 2) return;
+      var mult = 1, len = 0, i = 1, d;
+      do {
+        if (i >= b.length) return;
+        d = b[i++]; len += (d & 127) * mult; mult *= 128;
+      } while (d & 128);
+      if (b.length < i + len) return;
+      this.handle(b[0], b.subarray(i, i + len));
+      this.buf = b.slice(i + len);
+    }
+  };
+  Conn.prototype.handle = function (h, body) {
+    var self = this, type = h >> 4;
+    if (type === 2) { // CONNACK
+      if (body[1] !== 0) { try { self.ws.close(); } catch (e) {} return; }
+      self.backoff = 1000;
+      self.ws.send(subscribePkt(1, self.opts.subs));
+      (self.opts.onConnect || []).forEach(function (p) { self.ws.send(publishPkt(p.topic, p.payload, p.retain)); });
+      clearInterval(self.ping);
+      self.ping = setInterval(function () { self.send(new Uint8Array([0xC0, 0])); }, 20000);
+      self.setReady(true);
+    } else if (type === 3) { // PUBLISH
+      var qos = (h >> 1) & 3, tlen = (body[0] << 8) | body[1];
+      var topic = td.decode(body.subarray(2, 2 + tlen)), p = 2 + tlen;
+      if (qos > 0) {
+        var pid = body.subarray(p, p + 2); p += 2;
+        if (qos === 1) self.send(concat([new Uint8Array([0x40, 2]), pid]));
+      }
+      self.opts.onPublish(topic, td.decode(body.subarray(p)), !!(h & 1));
+    }
+  };
+  Conn.prototype.send = function (bytes) {
+    if (this.ws && this.ws.readyState === 1) { this.ws.send(bytes); return true; }
+    return false;
+  };
+  Conn.prototype.publish = function (topic, payload, retain) {
+    return this.ready && this.send(publishPkt(topic, payload, retain));
+  };
+  Conn.prototype.close = function () {
+    this.stopped = true; clearInterval(this.ping); clearTimeout(this.retryTimer);
+    try { this.ws.send(new Uint8Array([0xE0, 0])); this.ws.close(); } catch (e) {}
+  };
+  // Reconnect right away (e.g. when the phone screen wakes up).
+  Conn.prototype.kick = function () {
+    if (this.stopped) return;
+    if (!this.ws || this.ws.readyState > 1) { clearTimeout(this.retryTimer); this.retryTimer = null; this.backoff = 1000; this.open(); }
+  };
+
+  // ---------- encrypted relay ----------
+  function Relay(o) {
+    var self = this;
+    self.o = o; self.role = o.role; self.peer = o.peer || (o.role === 'pc' ? 'phone' : 'pc');
+    self.base = 'qfd/' + o.topic + '/';
+    self.seen = []; self.peerOnline = {}; self.lastStateTs = 0;
+    self.keyP = crypto.subtle.importKey('raw', unb64u(o.key), 'AES-GCM', false, ['encrypt', 'decrypt']);
+    var onlineTopic = self.base + self.role + '/online';
+    self.conns = BROKERS.map(function (url) {
+      return new Conn(url, {
+        subs: [self.base + self.peer + '/msg', self.base + self.peer + '/online'],
+        will: { topic: onlineTopic, payload: '0', retain: true },
+        onConnect: [{ topic: onlineTopic, payload: '1', retain: true }],
+        onReady: function () { self.emitStatus(); },
+        onPublish: function (topic, payload) { self.receive(url, topic, payload); }
+      });
+    });
+  }
+  Relay.prototype.status = function () {
+    var self = this;
+    return {
+      brokers: self.conns.filter(function (c) { return c.ready; }).length,
+      peerOnline: self.conns.some(function (c) { return c.ready && self.peerOnline[c.url]; })
+    };
+  };
+  Relay.prototype.emitStatus = function () { if (this.o.onStatus) this.o.onStatus(this.status()); };
+  Relay.prototype.receive = function (url, topic, payload) {
+    var self = this;
+    if (/\/online$/.test(topic)) { self.peerOnline[url] = payload === '1'; self.emitStatus(); return; }
+    self.keyP.then(function (key) {
+      var raw = unb64u(payload);
+      return crypto.subtle.decrypt({ name: 'AES-GCM', iv: raw.subarray(0, 12) }, key, raw.subarray(12));
+    }).then(function (plain) {
+      var msg = JSON.parse(td.decode(plain));
+      if (self.seen.indexOf(msg.mid) >= 0) return; // same message via the other broker
+      self.seen.push(msg.mid); if (self.seen.length > 200) self.seen.shift();
+      if (msg.t === 'state') {
+        if (msg.ts < self.lastStateTs) return;
+        self.lastStateTs = msg.ts;
+      } else if (Date.now() - msg.ts > 120000) return; // ignore stale commands
+      self.o.onMessage(msg);
+    }).catch(function () { /* not ours / wrong key */ });
+  };
+  Relay.prototype.send = function (obj, retain) {
+    var self = this;
+    obj.mid = b64u(rand(9)); obj.ts = Date.now();
+    var iv = rand(12);
+    return self.keyP.then(function (key) {
+      return crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, te.encode(JSON.stringify(obj)));
+    }).then(function (ct) {
+      var payload = b64u(concat([iv, new Uint8Array(ct)]));
+      var sent = 0;
+      self.conns.forEach(function (c) { if (c.publish(self.base + self.role + '/msg', payload, retain)) sent++; });
+      return sent;
+    });
+  };
+  Relay.prototype.kick = function () { this.conns.forEach(function (c) { c.kick(); }); };
+  Relay.prototype.close = function () {
+    var t = this.base + this.role + '/online';
+    this.conns.forEach(function (c) { c.publish(t, '0', true); c.close(); });
+  };
+
+  return { Relay: Relay, newPairing: newPairing, encodePairing: encodePairing, decodePairing: decodePairing };
+})();
+
+</script>
+<script>
+(function () {
+  'use strict';
+  var OPTS = [
+    { q: 'enrollment', s: 'Degree Plan', en: ['Advising / degree plan', 'Classes, majors, graduation'], es: ['Asesoría / plan de estudios', 'Clases, carreras, graduación'] },
+    { q: 'enrollment', s: 'Hold on Account', en: ["Can't register / hold", 'A hold on my account'], es: ['No puedo inscribirme', 'Bloqueo en mi cuenta'] },
+    { q: 'enrollment', s: 'Immunization', en: ['Meningitis shot', 'Immunization hold'], es: ['Vacuna de meningitis', 'Requisito de vacuna'] },
+    { q: 'enrollment', s: 'Testing Referral', en: ['TSI / testing', 'Placement test'], es: ['TSI / examen', 'Examen de ubicación'] },
+    { q: 'enrollment', s: 'Residency', en: ['Residency', 'In-state / documents'], es: ['Residencia', 'Documentos de residencia'] },
+    { q: 'enrollment', s: 'International', en: ['International student', 'F-1 / visa'], es: ['Estudiante internacional', 'F-1 / visa'] },
+    { q: 'finaid', s: 'Financial Aid', en: ['Financial aid', 'FAFSA, refunds, scholarships'], es: ['Ayuda financiera', 'FAFSA, reembolsos, becas'] },
+    { q: 'finaid', s: 'Veteran Services', en: ['Veterans / GI Bill', 'VA benefits, Hazlewood'], es: ['Veteranos / GI Bill', 'Beneficios VA, Hazlewood'] },
+    { q: 'enrollment', s: 'Other', en: ['Something else', 'Applying, transcripts, other'], es: ['Otra cosa', 'Solicitud, expedientes, otro'] }
+  ];
+  var T = {
+    es: { title: 'Registro', sub: 'Servicios Estudiantiles · Ayuda Financiera · Campus Wylie', need: '¿Con qué necesita ayuda?',
+      phone: 'Celular (le enviaremos un mensaje cuando sea su turno)', name: 'Nombre completo', cwid: 'Número de estudiante de Collin (CWID), si lo tiene',
+      cwidHint: 'Está en su correo de bienvenida de Collin. ¿Nuevo en Collin? Déjelo en blanco.', note: '¿Algo más? (opcional)', send: 'Registrarme',
+      legal: 'Al registrarse acepta recibir mensajes de texto de QLess sobre su turno. Responda STOP para cancelar.',
+      pick: 'Elija con qué necesita ayuda.', badPhone: 'Escriba un número de celular de 10 dígitos.', noName: 'Escriba su nombre.',
+      doneT: '¡Listo!', doneS: 'Tome asiento. Le enviaremos un mensaje de texto cuando sea su turno.', offline: 'No se pudo enviar. Por favor hable con la recepción.' },
+    en: { pick: 'Pick what you need help with.', badPhone: 'Enter a 10-digit cell number.', noName: 'Enter your name.',
+      doneT: "You're checked in!", doneS: "Have a seat — we'll text you when it's your turn.", offline: "Couldn't send. Please check in with the front desk." }
+  };
+  var lang = /^es/i.test(navigator.language) ? 'es' : 'en', choice = null, $ = function (s) { return document.querySelector(s); };
+  var EN = {}; document.querySelectorAll('[data-t]').forEach(function (el) { EN[el.dataset.t] = el.innerHTML; });
+  function t(k) { return (T[lang] && T[lang][k]) || T.en[k] || EN[k] || k; }
+  function render() {
+    document.documentElement.lang = lang;
+    document.querySelectorAll('[data-t]').forEach(function (el) { el.innerHTML = lang === 'es' && T.es[el.dataset.t] ? T.es[el.dataset.t] : EN[el.dataset.t]; });
+    $('#lang').textContent = lang === 'es' ? 'English' : 'Español';
+    var box = $('#opts'); box.innerHTML = '';
+    OPTS.forEach(function (o, i) {
+      var b = document.createElement('button'); b.type = 'button'; b.className = 'opt' + (choice === i ? ' sel' : '');
+      var l = o[lang]; b.innerHTML = ''; b.appendChild(document.createTextNode(l[0]));
+      var sm = document.createElement('small'); sm.textContent = l[1]; b.appendChild(sm);
+      b.onclick = function () { choice = i; render(); };
+      box.appendChild(b);
+    });
+  }
+  $('#lang').onclick = function () { lang = lang === 'es' ? 'en' : 'es'; render(); };
+  render();
+
+  var m = /[#&]k=([A-Za-z0-9_.-]+)/.exec(location.hash), pair = m && QRelay.decodePairing(m[1]);
+  var relay = pair ? new QRelay.Relay({ topic: pair.topic, key: pair.key, role: 'kiosk', peer: 'pc', onMessage: function () {} }) : null;
+  $('#f').onsubmit = function (e) {
+    e.preventDefault();
+    var phone = $('#phone').value.replace(/\D/g, ''); if (phone.length === 11 && phone[0] === '1') phone = phone.slice(1);
+    var err = choice == null ? t('pick') : phone.length !== 10 ? t('badPhone') : !$('#name').value.trim() ? t('noName') : '';
+    $('#err').textContent = err; if (err) return;
+    if (!relay) { $('#err').textContent = t('offline'); return; }
+    $('#go').disabled = true;
+    var o = OPTS[choice];
+    var send = function () { return relay.send({ t: 'checkin', queue: o.q, service: o.s, phone: phone, name: $('#name').value.trim(), cwid: $('#cwid').value.trim(), note: $('#note').value.trim(), lang: lang }); };
+    // the relay may still be connecting for a second or two after the page opens
+    var tries = 0;
+    (function attempt() {
+      send().then(function (n) {
+        if (n > 0) { $('#app').innerHTML = '<div class="done card"><div class="big">✅</div><h2>' + t('doneT') + '</h2><p>' + t('doneS') + '</p></div>'; return; }
+        if (++tries < 12) setTimeout(attempt, 500); else { $('#err').textContent = t('offline'); $('#go').disabled = false; }
+      });
+    })();
+  };
+})();
+</script>
+</body>
+</html>

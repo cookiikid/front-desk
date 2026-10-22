@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Self check-in sign</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+  @page { size: letter portrait; margin: 0.5in; }
+  body { margin: 0; font-family: "Segoe UI", Arial, sans-serif; color: #102030; background: #e9eef3; }
+  .sheet { width: 7.5in; min-height: 10in; margin: 20px auto; background: #fff; border-radius: 18px; box-shadow: 0 10px 40px rgba(0,0,0,.12); padding: .6in .5in; box-sizing: border-box; text-align: center; }
+  .brand { color: #0b5ea8; font-weight: 800; letter-spacing: .12em; font-size: 15pt; }
+  h1 { font-size: 46pt; margin: .18in 0 0; line-height: 1.05; }
+  h2 { font-size: 22pt; margin: .08in 0 .3in; color: #0b5ea8; font-weight: 600; }
+  #qr { display: inline-block; padding: .22in; border: 6px solid #0b5ea8; border-radius: 28px; }
+  #qr img, #qr canvas { width: 3.6in !important; height: 3.6in !important; }
+  .steps { display: flex; justify-content: center; gap: .35in; margin: .35in 0 .2in; font-size: 14pt; }
+  .steps div { max-width: 1.9in; } .steps b { display: block; font-size: 26pt; color: #0b5ea8; }
+  .es { color: #4a5a6a; font-size: 15pt; margin-top: .25in; border-top: 2px dashed #c9d6e2; padding-top: .2in; }
+  .print { position: fixed; top: 14px; right: 14px; background: #0b5ea8; color: #fff; border: 0; border-radius: 10px; padding: 10px 16px; font-size: 15px; cursor: pointer; }
+  @media print { body { background: #fff; } .sheet { box-shadow: none; margin: 0; } .print { display: none; } }
+</style>
+</head>
+<body>
+<button class="print" onclick="window.print()">🖨 Print</button>
+<div class="sheet">
+  <div class="brand">COLLIN COLLEGE · WYLIE CAMPUS</div>
+  <h1>Busy? Skip the line.</h1>
+  <h2>Scan to check in from your phone</h2>
+  <div id="qr"></div>
+  <div class="steps"><div><b>1</b>Scan with your camera</div><div><b>2</b>Pick what you need</div><div><b>3</b>We'll text you when it's your turn</div></div>
+  <div class="es"><b>¿Hay fila?</b> Escanee el código para registrarse desde su celular — le enviaremos un mensaje cuando sea su turno.</div>
+</div>
+<script>
+  var m = /[#&]k=([A-Za-z0-9_.-]+)/.exec(location.hash);
+  var url = location.href.replace(/sign\.html.*$/, 'checkin.html') + (m ? '#k=' + m[1] : '');
+  new QRCode(document.getElementById('qr'), { text: url, width: 360, height: 360, correctLevel: QRCode.CorrectLevel.M });
+</script>
+</body>
+</html>

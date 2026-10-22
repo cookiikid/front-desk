@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Qless Front Desk Assistant
 // @namespace    qless-front-desk
-// @version      2.1.0
+// @version      2.2.0
 // @description  Hands-free iPhone voice check-in, live assistant tips, CWID auto-fill, shortcuts and a daily counter for Qless
 // @match        *://merchant.qless.com/*
 // @require      https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js
@@ -247,9 +247,14 @@
       return JSON.parse(new TextDecoder().decode(plain));
     }
   
+    // Words speech recognition gets wrong in this lobby (heard -> meant).
+    var SOUNDALIKE = [[/\bboating\b/g, 'voting'], [/\bboat\b(?= (?:at|here|today|early))/g, 'vote'], [/\b(?:quoting|floating|noting)(?= (?:location|booth|center|at|today))/g, 'voting'],
+      [/\bt s i\b|\btea s i\b|\bt\.s\.i\.?/g, 'tsi'], [/\bfafsa's\b|\bfasa\b|\bfafsa\b|\bfaf sa\b|\bfaff sa\b/g, 'fafsa'], [/\bhazel ?wood\b/g, 'hazlewood'],
+      [/\bmeningitis\b|\bmenengitis\b/g, 'meningitis'], [/\bc ?w ?i ?d\b/g, 'cwid']];
+    function fixHeard(s) { s = String(s || '').toLowerCase(); SOUNDALIKE.forEach(function (r) { s = s.replace(r[0], r[1]); }); return s; }
     // lowercase, no accents/punctuation, plural "s" dropped so "transcripts" matches "transcript"
     function norm(s) {
-      return ' ' + String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+      return ' ' + fixHeard(s).normalize('NFD').replace(/[̀-ͯ]/g, '')
         .replace(/[^a-z0-9+@.\s]/g, ' ').replace(/\.+(\s|$)/g, ' ').split(/\s+/).filter(Boolean)
         .map(function (w) { return w.length > 3 && /[^s]s$/.test(w) ? w.slice(0, -1) : w; }).join(' ') + ' ';
     }
@@ -271,7 +276,7 @@
     // "WSC 330", "SC-330", "CC 215F", "WLB 206", "library 206", "student center 113", "campus commons 2 15"
     var ROOM_RE = /\b(w?cc|w?sc|wlb|campus commons|student center|library)[\s-]*([1-3])\s*(\d\d)([a-f])?\b/i;
     function roomCard(text) {
-      var m = ROOM_RE.exec(String(text || '').split(/\s+/).slice(-30).join(' '));
+      var m = ROOM_RE.exec(String(text || '').split(/\s+/).slice(-30).join(' ').replace(/\b(w?[cs]c)\s+(\d)\s+(\d)\s*(\d)\b/ig, '$1 $2$3$4'));
       if (!m) return null;
       var k = m[1].toLowerCase().replace(/^w(?=cc|sc)/, '');
       var b = /cc|commons/.test(k) ? 'CC' : /sc|student/.test(k) ? 'SC' : 'L';
@@ -350,7 +355,34 @@
       return out;
     }
   
+    // Typed search box: every word must prefix-match something on the card (title counts most).
+    function search(q, max) {
+      if (!kb) return [];
+      var STOP = /^(where|wheres|is|the|a|an|to|how|do|does|i|get|find|my|for|of|in|at|what|can|you|me|go|please|need|want|it|on|and|or|about|with)$/;
+      var words = norm(q).trim().split(' ').filter(function (w) { return (w.length > 1 || /\d/.test(w)) && !STOP.test(w); });
+      if (!words.length) return [];
+      var out = [], rc = roomCard(q);
+      if (rc) out.push({ s: 100, card: rc });
+      var now = today();
+      index.forEach(function (e) {
+        var c = e.card;
+        if (c.until && c.until < now) return;
+        var title = norm(c.title), trig = e.triggers.join(' '), body = norm((c.say || '') + ' ' + (c.facts || []).join(' '));
+        var s = 0, missed = 0;
+        words.forEach(function (w) {
+          var re = new RegExp(' ' + w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+          var hit = re.test(title) ? 4 : re.test(trig) ? 3 : re.test(body) ? 1 : 0;
+          if (!hit) missed++;
+          s += hit;
+        });
+        if (s && missed <= (words.length > 2 ? 1 : words.length > 1 ? 1 : 0) && missed < words.length) out.push({ s: s + (c.kind === 'place' ? 1 : 0) + (c.priority || 0), card: c });
+      });
+      out.sort(function (a, b) { return b.s - a.s; });
+      return out.slice(0, max || 6).map(function (x) { return x.card.kind === 'place' && /^room:/.test(x.card.id) ? x.card : render(x.card); });
+    }
+  
     return {
+      search: search, fixHeard: fixHeard,
       decrypt: decrypt, load: load, match: match, byId: byId, upcoming: upcoming, fmtDate: fmtDate,
       keyterms: function () { return (kb && kb.keyterms) || []; },
       loaded: function () { return !!kb; },
@@ -405,6 +437,7 @@
 
   var acvm, relay, pairing, currentLookup = null, last = null, remoteBusy = false, remoteAdding = false, panel, pill, toastBox, liveBox;
   var live = null, liveAt = 0, team = [], teamAt = 0, deskRelay = null;
+  var ownName = ''; // a name the phone heard and we typed in (not a Qless lookup result)
 
   // One-time setup link: https://merchant.qless.com/cec/#qfd-setup=<base64url JSON {kbKey, me, dgKey}>
   function readSetupLink() {
@@ -457,6 +490,19 @@
 
   // ---------- CWID auto-fill (what V5 did, via Knockout instead of a timer) ----------
   function installCwidAutofill() {
+    // Lookup result arrives in consumerInfoWS.notes; Notes stays empty because auto-populate is off at Wylie.
+    if (acvm.consumerInfoWS && acvm.consumerInfoWS.notes && acvm.consumerInfoWS.notes.subscribe) {
+      acvm.consumerInfoWS.notes.subscribe(function (prev) {
+        var id = cwidFrom(prev);
+        if (!id || remoteBusy || !vm.showAddConsumer() || String(acvm.notes() || '').trim()) return;
+        setTimeout(function () { if (!String(acvm.notes() || '').trim()) { acvm.notes(formatNote(id, '')); log('CWID filled', id); } }, 0);
+      });
+    }
+    // Late name from the lookup -> tell the phone (it needs the name before it can auto-add).
+    acvm.consumerName.subscribe(function (nm) {
+      nm = String(nm || '').trim();
+      if (nm && nm !== ownName && currentLookup && currentLookup.phone === digits(acvm.phone()) && !currentLookup.name) { currentLookup.name = nm; currentLookup.known = true; publishState(); }
+    });
     acvm.notes.subscribe(function (v) {
       if (!v || remoteBusy) return;
       var prev = acvm.consumerInfoWS && ko.unwrap(acvm.consumerInfoWS.notes);
@@ -470,7 +516,7 @@
   function onManualLookupDone() {
     if (remoteBusy || !vm.showAddConsumer()) return;
     setTimeout(function () {
-      var ta = document.getElementById('addConsumerNotes');
+      var ta = formEl('addConsumerNotes');
       if (ta && document.activeElement && document.activeElement.id === 'phoneInput' && acvm.phoneIsValid()) {
         ta.focus(); ta.selectionStart = ta.selectionEnd = ta.value.length;
       }
@@ -531,9 +577,16 @@
     if (!vm.showAddConsumer()) vm.toggleAddConsumer(null, { target: { getAttribute: function () { return String(qid); } } });
     else acvm.queueIds([Number(qid)]);
   }
-  function focusEl(id) { var el = document.getElementById(id); if (el && !el.disabled) el.focus(); }
+  function formEl(id) { return document.querySelector('#addConsumerContainer [id="' + id + '"]') || document.getElementById(id); }
+  function focusEl(id) { var el = formEl(id); if (el && !el.disabled) el.focus(); }
   function installShortcuts() {
     document.addEventListener('keydown', function (e) {
+      var typing = /INPUT|TEXTAREA|SELECT/.test((document.activeElement || {}).tagName || '');
+      if ((e.ctrlKey && (e.key === 'k' || e.key === 'K')) || (e.key === '/' && !typing)) {
+        var si = document.getElementById('qfd-search');
+        if (si) { e.preventDefault(); if (liveBox.classList.contains('min')) { liveBox.classList.remove('min'); renderLive(); si = document.getElementById('qfd-search'); } si.focus(); si.select(); }
+        return;
+      }
       if (e.altKey && !e.ctrlKey && /^[1-9]$/.test(e.key)) {
         var q = vm.selectedQueues()[Number(e.key) - 1];
         if (q) { e.preventDefault(); openQueue(q.id); setTimeout(function () { focusEl('phoneInput'); }, 200); }
@@ -559,19 +612,93 @@
     });
     setTimeout(function () { publishState(true); }, 1500);
     startDesk();
+    startKiosk();
   }
   // Who's available, from the Jabber helper running on this PC (desk/desk-agent.js).
-  function startDesk() {
-    var d = store.get('desk', null);
+  // Self check-in channel (students' phones -> this PC), also derived from the knowledge key.
+  var kioskRelay = null, checkins = [];
+  async function derivedPairing(name) {
+    var k = store.get('kbKey', '');
+    if (!k) return null;
+    var h = async function (label) { return new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(label + '|' + k))); };
+    var b64u = function (u) { var x = ''; u.forEach(function (c) { x += String.fromCharCode(c); }); return btoa(x).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); };
+    return { topic: b64u((await h(name + '-topic')).slice(0, 12)), key: b64u(await h(name + '-key')) };
+  }
+  async function startKiosk() {
+    var d = await derivedPairing('kiosk');
+    if (!d || kioskRelay) return;
+    kioskRelay = new QRelay.Relay({ topic: d.topic, key: d.key, role: 'pc', peer: 'kiosk', onMessage: onCheckin });
+  }
+  function onCheckin(m) {
+    if (m.t !== 'checkin' || !/^\d{10}$/.test(m.phone || '')) return;
+    if (checkins.some(function (c) { return c.phone === m.phone && Date.now() - c.at < 180000; })) return; // double taps
+    checkins.push({ id: m.mid, at: Date.now(), queue: m.queue, service: m.service, phone: m.phone, name: String(m.name || '').slice(0, 60),
+      cwid: String(m.cwid || '').replace(/[^a-z0-9]/gi, '').slice(0, 12), note: String(m.note || '').slice(0, 200), lang: m.lang });
+    toast('📝 Self check-in: ' + m.name);
+    chime();
+    renderLive();
+  }
+  function chime() {
+    try {
+      var a = new (window.AudioContext || window.webkitAudioContext)(), o = a.createOscillator(), g = a.createGain();
+      o.frequency.value = 880; g.gain.setValueAtTime(0.08, a.currentTime); g.gain.exponentialRampToValueAtTime(0.0001, a.currentTime + 0.35);
+      o.connect(g); g.connect(a.destination); o.start(); o.stop(a.currentTime + 0.35);
+    } catch (e) {}
+  }
+  function checkinToFill(c, add) {
+    var q = vm.selectedQueues().filter(function (q) { return c.queue === 'finaid' ? /financ/i.test(ko.unwrap(q.description)) : /enroll/i.test(ko.unwrap(q.description)); })[0];
+    var tt = q && (acvm.transactionTypesForQueueId(q.id) || []).filter(function (t) { return t.description.toLowerCase() === String(c.service).toLowerCase(); })[0];
+    var note = (c.note || '') + (c.lang === 'es' ? (c.note ? ' ' : '') + '(Spanish)' : '');
+    return { t: 'fill', reqId: 'kiosk-' + c.id, queueId: q ? q.id : null, serviceId: tt ? tt.id : null, phone: c.phone, name: c.name, cwid: c.cwid, note: note, add: add, manual: true };
+  }
+  function checkinsHtml() {
+    if (!checkins.length) return '';
+    return '<div class="team kiosk"><b>📝 Self check-ins (' + checkins.length + ')</b>' + checkins.map(function (c, i) {
+      return '<div class="pp"><span class="pn">' + esc(c.name) + '</span><span class="pm">' + esc(fmtPhone(c.phone) + ' · ' + c.service + (c.cwid ? ' · ' + c.cwid : '') + (c.lang === 'es' ? ' · ES' : '')) + '</span>' +
+        '<a href="#" data-ci="' + i + '" data-act="add">Add</a><a href="#" data-ci="' + i + '" data-act="fill">Fill</a><a href="#" data-ci="' + i + '" data-act="x" class="x">✕</a></div>' +
+        (c.note ? '<div class="pm" style="padding-left:2px">“' + esc(c.note) + '”</div>' : '');
+    }).join('') + '</div>';
+  }
+  function wireCheckins() {
+    liveBox.querySelectorAll('[data-ci]').forEach(function (a) {
+      a.onclick = function (e) {
+        e.preventDefault();
+        var c = checkins[Number(a.dataset.ci)];
+        if (!c) return;
+        if (a.dataset.act !== 'x') queueFill(checkinToFill(c, a.dataset.act === 'add'));
+        checkins.splice(checkins.indexOf(c), 1);
+        renderLive();
+      };
+    });
+  }
+  function kioskSignUrl() {
+    return derivedPairing('kiosk').then(function (d) { return d ? phoneUrl() + 'sign.html#k=' + QRelay.encodePairing(d) : null; });
+  }
+
+  async function deskPairing() {
+    var d = store.get('desk', null), k = store.get('kbKey', '');
+    if (d || !k) return d;
+    var h = async function (label) { return new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(label + '|' + k))); };
+    var b64u = function (u) { var x = ''; u.forEach(function (c) { x += String.fromCharCode(c); }); return btoa(x).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); };
+    return { topic: b64u((await h('desk-topic')).slice(0, 12)), key: b64u(await h('desk-key')) };
+  }
+  async function startDesk() {
+    var d = await deskPairing();
     if (!d || deskRelay) return;
     deskRelay = new QRelay.Relay({
       topic: d.topic, key: d.key, role: 'pc', peer: 'desk',
       onMessage: function (m) { if (m.t === 'presence') { team = m.people || []; teamAt = Date.now(); renderLive(); if (panel && !panel.hidden) renderPanel(); } }
     });
   }
+  function autoFillOn() { return store.get('autoFill', true); }
+  function autoAddOn() { return store.get('autoAdd', true); }
   function onPhoneMessage(m) {
     if (m.t === 'hello') { publishState(true); sendConfig(); }
-    else if (m.t === 'fill') queueFill(m);
+    else if (m.t === 'fill') {
+      if (!autoFillOn() && !m.manual) return; // switched off on the PC: captions/tips only
+      if (m.add && m.auto && !autoAddOn()) m.add = false;
+      queueFill(m);
+    }
     else if (m.t === 'live') { live = m; liveAt = Date.now(); renderLive(); }
     else if (m.t === 'cancel') { if (vm.showAddConsumer()) acvm.cancelAddConsumer(); currentLookup = null; live = null; renderLive(); publishState(); }
   }
@@ -596,7 +723,7 @@
     acvm.consumerName(''); acvm.notes('');
     try { acvm.consumerInfoWS.notes(null); acvm.consumerInfoWS.consumerName = null; } catch (e) {}
     var started = lookupStarted, done = waitLookup(4000);
-    var input = document.getElementById('phoneInput');
+    var input = formEl('phoneInput');
     if (input) {
       input.value = d;
       input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -614,7 +741,7 @@
     var qid = f.queueId != null ? Number(f.queueId) : null;
     if (!vm.showAddConsumer()) {
       openQueue(qid || vm.selectedQueues()[0].id);
-      await waitFor(function () { return vm.showAddConsumer() && document.getElementById('phoneInput'); }, 500);
+      await waitFor(function () { var el = formEl('phoneInput'); return vm.showAddConsumer() && el && el.offsetParent; }, 600);
     } else if (qid && !(acvm.queueIds().length === 1 && Number(acvm.queueIds()[0]) === qid)) {
       acvm.queueIds([qid]);
     }
@@ -626,13 +753,14 @@
     var lk = currentLookup;
     if (f.phone && f.phone.length === 10 && (digits(acvm.phone()) !== f.phone || !lk || lk.phone !== f.phone)) {
       toast('📱 Looking up ' + fmtPhone(f.phone) + '…');
-      await setPhone(f.phone);
+      var looked = await setPhone(f.phone);
+      if (looked) await waitFor(function () { return String(acvm.consumerName() || '').trim() || ko.unwrap(acvm.consumerInfoWS.notes); }, 1500);
       var prev = acvm.consumerInfoWS && ko.unwrap(acvm.consumerInfoWS.notes);
       var nm = String(acvm.consumerName() || '').trim();
       currentLookup = lk = { phone: f.phone, name: nm, cwid: cwidFrom(prev), known: !!(nm || prev) };
       await sleep(120);
     }
-    if (f.name && !String(acvm.consumerName() || '').trim()) acvm.consumerName(f.name);
+    if (f.name && !String(acvm.consumerName() || '').trim()) { ownName = f.name; acvm.consumerName(f.name); }
     var cwid = f.cwid || (lk && lk.phone === f.phone ? lk.cwid : null);
     var note = cwid || f.note ? formatNote(cwid, f.note) : lk && lk.phone === f.phone && !acvm.notes() ? formatNote('', '') : null;
     if (note) {
@@ -697,7 +825,7 @@
         queueId: acvm.queueIds()[0], serviceId: acvm.selectedTransactionType(), phone: digits(acvm.phone()),
         name: String(acvm.consumerName() || ''), notes: String(acvm.notes() || '').slice(0, 300), canAdd: !!acvm.addButtonEnabled()
       } : null,
-      lookup: currentLookup, last: last,
+      lookup: currentLookup, last: last, autoFill: autoFillOn(), autoAdd: autoAddOn(),
       stats: { total: s.total, byQueue: s.byQueue }
     };
   }
@@ -749,6 +877,14 @@
       '#qfd-live .tip ul{margin:5px 0 0;padding-left:17px;color:#555;font-size:12.5px}',
       '#qfd-live .up{padding:6px 12px 10px;color:#666;font-size:12px;border-top:1px solid #eee}#qfd-live .up div{padding:1px 0}',
       '#qfd-live.min .body{display:none}',
+      '#qfd-live .sw{display:flex;gap:6px;align-items:center;padding:8px 12px 0}',
+      '#qfd-live .kiosk{background:#eef7ee;border-color:#bfe0c2}#qfd-live .kiosk a.x{background:#aaa}',
+      '#qfd-live .sw button{border:1px solid #c9c9c9;background:#f1f1f1;color:#666;border-radius:14px;padding:4px 10px;font:bold 12px Arial,sans-serif;cursor:pointer}',
+      '#qfd-live .sw button.on{background:#2db34a;border-color:#2db34a;color:#fff}',
+      '#qfd-live .sw .phone-st{margin-left:auto;color:#888;font-size:12px}',
+      '#qfd-live .srch{padding:8px 12px}',
+      '#qfd-live .srch input{width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #c9d3dc;border-radius:8px;font:14px Arial,sans-serif;outline:none}',
+      '#qfd-live .srch input:focus{border-color:#1a9ad6;box-shadow:0 0 0 3px rgba(26,154,214,.15)}',
       '#qfd-live .team{margin:0 12px 10px;padding:8px 10px;border-radius:8px;background:#f5f7f9;border:1px solid #e3e6ea}',
       '#qfd-live .pp,#qfd-panel .pp{display:flex;align-items:center;gap:6px;padding:3px 0}',
       '.pp .pd{width:8px;height:8px;border-radius:50%;flex:0 0 8px}.pp .pn{font-weight:bold}.pp .pm{color:#888;font-size:12px;flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}',
@@ -790,6 +926,8 @@
       '<div style="margin-top:6px"><button class="grey" id="qfd-reset">Reset today</button></div></section>' +
       '<section><h4>Shortcuts</h4>' + qs + '<div><kbd>Ctrl+Enter</kbd> Add (submit)</div><div><kbd>Esc</kbd> Stop the auto-add countdown / close the form</div>' +
       '<div style="color:#888;font-size:11px;margin-top:4px">Phone field is focused automatically; after the lookup the cursor jumps to Notes.</div></section>' +
+      '<section><h4>Busy? Self check-in</h4><div style="font-size:12px;color:#666;margin-bottom:6px">Print the QR sign for the counter. Students check themselves in on their phone; they show up here with an Add button.</div>' +
+      '<button id="qfd-sign">Open the printable QR sign</button></section>' +
       '<section><h4>Setup</h4>' +
       '<div style="margin-bottom:6px">Deepgram key (speech AI)<input id="qfd-dg" type="password" value="' + esc(store.get('dgKey', '')) + '" placeholder="paste key"></div>' +
       '<div style="margin-bottom:6px">Your name (so it never mistakes you for the student)<input id="qfd-me" value="' + esc(store.get('me', '')) + '"></div>' +
@@ -797,6 +935,7 @@
       '<section><h4>Phone app address</h4><input id="qfd-url" value="' + esc(phoneUrl()) + '"></section>';
     panel.querySelector('#qfd-close').onclick = function () { panel.hidden = true; };
     panel.querySelector('#qfd-pair').onclick = showQr;
+    panel.querySelector('#qfd-sign').onclick = function () { kioskSignUrl().then(function (u) { if (u) window.open(u, '_blank'); else toast('Open your setup link first'); }); };
     panel.querySelector('#qfd-repair').onclick = function () {
       pairing = QRelay.newPairing(); store.set('pairing', pairing); startRelay(); renderPanel(); showQr();
     };
@@ -806,6 +945,24 @@
     panel.querySelector('#qfd-me').onchange = function (e) { store.set('me', e.target.value.trim()); sendConfig(); };
   }
   // ---------- live assistant overlay (captions, detected fields, countdown, tips) ----------
+  var searchQuery = '';
+  // Typed search: knowledge cards, places + directions, any room number, staff, Jabber people.
+  function renderSearch() {
+    var box = liveBox && liveBox.querySelector('#qfd-results');
+    if (!box) return;
+    var q = (searchQuery || '').trim();
+    if (!q) { box.innerHTML = ''; return; }
+    var h = '', cards = QKB.loaded() ? QKB.search(q, 6) : [];
+    cards.forEach(function (c) {
+      h += '<div class="tip' + (c.kind === 'place' ? ' place' : '') + '"><b>' + ({ staff: '👤 ', place: '📍 ' }[c.kind] || '💡 ') + esc(c.title) + '</b>' + (c.say ? '<div class="say">' + esc(c.say) + '</div>' : '') +
+        (c.facts.length ? '<ul>' + c.facts.slice(0, 4).map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' : '') + '</div>';
+    });
+    var ql = q.toLowerCase();
+    var people = team.filter(function (p) { return (p.name + ' ' + p.groups.join(' ') + ' ' + (p.title || '')).toLowerCase().indexOf(ql) >= 0; }).slice(0, 6);
+    if (people.length) h += '<div class="team"><b>Jabber</b>' + people.map(personRow).join('') + '</div>';
+    if (window.QMapsUI && QMapsUI.searchHtml) h = QMapsUI.searchHtml(q) + h;
+    box.innerHTML = h || '<div class="up">No matches.</div>';
+  }
   var STATE_DOT = { available: '#2db34a', busy: '#e5484d', away: '#e8a317', offline: '#bbb' };
   var STATE_RANK = { available: 0, away: 1, busy: 2, offline: 3 };
   function groupsFor(tips) {
@@ -850,13 +1007,18 @@
     if (!liveBox) return;
     var st = relay ? relay.status() : { peerOnline: false };
     var fresh = live && Date.now() - liveAt < 60000;
-    liveBox.hidden = !st.peerOnline && !fresh && !team.length;
-    if (liveBox.hidden) return;
+    liveBox.hidden = false;
+    var keepSearch = liveBox.querySelector('#qfd-search'), q = keepSearch ? keepSearch.value : searchQuery, hadFocus = keepSearch && document.activeElement === keepSearch;
     var speaking = live && Date.now() - liveAt < 4000 && live.text;
     var h = '<div class="hd" id="qfd-live-hd"><span class="dot' + (speaking ? ' on' : '') + '"></span>' +
       (speaking ? 'Listening' : 'iPhone ready') +
       (live && live.lang && live.lang !== 'en' ? ' <span class="lang">🌐 ' + esc(LANG_NAMES[live.lang] || live.lang) + '</span>' : '') +
-      '<span style="margin-left:auto;font-weight:normal;color:#888">' + bossLink() + ' ' + (liveBox.classList.contains('min') ? '▸' : '▾') + '</span></div><div class="body">';
+      '<span style="margin-left:auto;font-weight:normal;color:#888;display:flex;gap:6px;align-items:center">' + bossLink() + ' ' + (liveBox.classList.contains('min') ? '▸' : '▾') + '</span></div>' +
+      '<div class="body"><div class="sw">' +
+      '<button id="qfd-sw-fill" class="' + (autoFillOn() ? 'on' : '') + '" title="Let the iPhone open and fill the form">Auto-fill ' + (autoFillOn() ? 'ON' : 'OFF') + '</button>' +
+      '<button id="qfd-sw-add" class="' + (autoAddOn() ? 'on' : '') + '" title="Let the countdown add students by itself">Auto-add ' + (autoAddOn() ? 'ON' : 'OFF') + '</button>' +
+      '<span class="phone-st">' + (st.peerOnline ? '📱 on' : '📱 off') + '</span></div>' +
+      '<div class="srch"><input id="qfd-search" placeholder="Search anything… (room, office, FAFSA, a person)  — Ctrl+K" autocomplete="off"></div><div id="qfd-results"></div>' + checkinsHtml();
     if (live && live.text) {
       var words = live.text.split(/\s+/), cut = Math.max(0, words.length - 14);
       h += '<div class="cap"><div>' + esc(words.slice(0, cut).join(' ')) + ' <b>' + esc(words.slice(cut).join(' ')) + '</b></div></div>';
@@ -886,6 +1048,15 @@
     h += '</div>';
     liveBox.innerHTML = h;
     liveBox.querySelector('#qfd-live-hd').onclick = function () { liveBox.classList.toggle('min'); store.set('liveMin', liveBox.classList.contains('min')); renderLive(); };
+    liveBox.querySelector('#qfd-sw-fill').onclick = function () { store.set('autoFill', !autoFillOn()); toast('Auto-fill ' + (autoFillOn() ? 'ON' : 'OFF')); publishState(true); renderLive(); };
+    liveBox.querySelector('#qfd-sw-add').onclick = function () { store.set('autoAdd', !autoAddOn()); toast('Auto-add ' + (autoAddOn() ? 'ON' : 'OFF')); if (!autoAddOn() && relay) relay.send({ t: 'cancel-auto' }); publishState(true); renderLive(); };
+    var si = liveBox.querySelector('#qfd-search');
+    si.value = q || '';
+    si.oninput = function () { searchQuery = si.value; renderSearch(); };
+    si.onkeydown = function (e) { if (e.key === 'Escape') { si.value = ''; searchQuery = ''; renderSearch(); si.blur(); } e.stopPropagation(); };
+    if (hadFocus) { si.focus(); si.selectionStart = si.selectionEnd = si.value.length; }
+    renderSearch();
+    wireCheckins();
   }
 
   function teamPanelHtml() {
