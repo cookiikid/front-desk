@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Qless Front Desk Assistant
 // @namespace    qless-front-desk
-// @version      1.0.0
-// @description  iPhone voice remote, CWID auto-fill, keyboard shortcuts and a daily counter for Qless
+// @version      2.0.0
+// @description  Hands-free iPhone voice check-in, live assistant tips, CWID auto-fill, shortcuts and a daily counter for Qless
 // @match        *://merchant.qless.com/*
 // @require      https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js
 // @grant        none
@@ -227,6 +227,101 @@
   })();
   
 
+  /* QKB — the front-desk knowledge base: instant tips from what's being said.
+   * kb.json (private) is published only as AES-GCM ciphertext (kb.enc); the key lives on the PC + phone. */
+  var QKB = (function () {
+    'use strict';
+    var kb = null, index = [];
+  
+    function unb64u(str) {
+      str = str.replace(/-/g, '+').replace(/_/g, '/');
+      while (str.length % 4) str += '=';
+      var s = atob(str), out = new Uint8Array(s.length);
+      for (var i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+      return out;
+    }
+    async function decrypt(b64, keyB64u) {
+      var raw = unb64u(b64.trim());
+      var key = await crypto.subtle.importKey('raw', unb64u(keyB64u), 'AES-GCM', false, ['decrypt']);
+      var plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: raw.subarray(0, 12) }, key, raw.subarray(12));
+      return JSON.parse(new TextDecoder().decode(plain));
+    }
+  
+    // lowercase, no accents/punctuation, plural "s" dropped so "transcripts" matches "transcript"
+    function norm(s) {
+      return ' ' + String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .replace(/[^a-z0-9+@.\s]/g, ' ').replace(/\.+(\s|$)/g, ' ').split(/\s+/).filter(Boolean)
+        .map(function (w) { return w.length > 3 && /[^s]s$/.test(w) ? w.slice(0, -1) : w; }).join(' ') + ' ';
+    }
+  
+    function load(data) {
+      kb = data; index = [];
+      (kb.cards || []).forEach(function (c) {
+        index.push({ card: c, triggers: (c.triggers || []).map(function (t) { return norm(t); }) });
+      });
+      (kb.staff || []).forEach(function (p) {
+        var n = norm(p.name);
+        if (n.trim().split(' ').length < 2) return; // full names only, to avoid false hits
+        index.push({
+          card: { id: 'staff:' + p.name, kind: 'staff', title: p.name, say: p.title + (p.where ? ' — ' + p.where : ''), facts: [p.phone, p.email].filter(Boolean) },
+          triggers: [n]
+        });
+      });
+      return kb;
+    }
+  
+    function upcoming(days, re) {
+      if (!kb || !kb.dates) return [];
+      var now = new Date(); now.setHours(0, 0, 0, 0);
+      var end = new Date(now.getTime() + days * 864e5);
+      return kb.dates.filter(function (d) {
+        var t = new Date(d.date + 'T00:00:00');
+        return t >= now && t <= end && (!re || new RegExp(re, 'i').test(d.label));
+      });
+    }
+    function fmtDate(iso) {
+      var d = new Date(iso + 'T00:00:00');
+      return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    }
+  
+    // text -> best cards. Recent words count more (the last ~25 words are what's being talked about now).
+    // opts.skip: regex of card ids to leave out (e.g. the "find your CWID" card once we already have it)
+    function match(text, max, opts) {
+      if (!kb) return [];
+      var skip = opts && opts.skip;
+      var all = norm(text), recent = norm(String(text || '').split(/\s+/).slice(-25).join(' '));
+      var scored = [];
+      index.forEach(function (e) {
+        var s = 0;
+        e.triggers.forEach(function (t) {
+          if (all.indexOf(t) >= 0) s += t.length > 12 ? 3 : 2;
+          if (recent.indexOf(t) >= 0) s += 1;
+        });
+        if (s && !(skip && skip.test(e.card.id))) scored.push({ s: s + (e.card.priority || 0), card: e.card });
+      });
+      scored.sort(function (a, b) { return b.s - a.s; });
+      return scored.slice(0, max || 2).map(function (x) { return render(x.card); });
+    }
+    function byId(id) {
+      var e = index.filter(function (x) { return x.card.id === id; })[0];
+      return e ? render(e.card) : null;
+    }
+    // Attach live dates (e.g. next withdraw deadline) to a card.
+    function render(c) {
+      var out = { id: c.id, kind: c.kind || 'tip', title: c.title, say: c.say, facts: (c.facts || []).slice(), queue: c.queue || null };
+      if (c.dates) upcoming(400, c.dates).slice(0, 3).forEach(function (d) { out.facts.push(fmtDate(d.date) + ': ' + d.label); });
+      return out;
+    }
+  
+    return {
+      decrypt: decrypt, load: load, match: match, byId: byId, upcoming: upcoming, fmtDate: fmtDate,
+      keyterms: function () { return (kb && kb.keyterms) || []; },
+      loaded: function () { return !!kb; },
+      version: function () { return kb && kb.version; }
+    };
+  })();
+  
+
   var PHONE_URL_DEFAULT = 'https://cookiikid.github.io/front-desk/';
   var log = function () { console.log.apply(console, ['[Front Desk]'].concat([].slice.call(arguments))); };
   var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
@@ -268,13 +363,45 @@
   }
 
   function ready() { return window.vm && window.ko && vm.addConsumerVM && vm.selectedQueues && vm.toggleAddConsumer; }
-  (function waitForQless() { if (ready()) init(); else setTimeout(waitForQless, 300); })();
+  // Start after the whole script has run (setup link, constants), even when Qless is already loaded.
+  setTimeout(function waitForQless() { if (ready()) init(); else setTimeout(waitForQless, 300); }, 0);
 
-  var acvm, relay, pairing, currentLookup = null, last = null, remoteBusy = false, panel, pill, toastBox;
+  var acvm, relay, pairing, currentLookup = null, last = null, remoteBusy = false, remoteAdding = false, panel, pill, toastBox, liveBox;
+  var live = null, liveAt = 0;
+
+  // One-time setup link: https://merchant.qless.com/cec/#qfd-setup=<base64url JSON {kbKey, me, dgKey}>
+  function readSetupLink() {
+    var m = /qfd-setup=([A-Za-z0-9_-]+)/.exec(location.hash);
+    if (!m) return;
+    try {
+      var s = JSON.parse(atob(m[1].replace(/-/g, '+').replace(/_/g, '/')));
+      if (s.kbKey) store.set('kbKey', s.kbKey);
+      if (s.me) store.set('me', s.me);
+      if (s.dgKey) store.set('dgKey', s.dgKey);
+      history.replaceState(null, '', location.pathname + location.search);
+      setTimeout(function () { toast('✅ Front Desk setup saved'); }, 1500);
+    } catch (e) { log('bad setup link', e); }
+  }
+  readSetupLink();
+
+  function loadKb() {
+    var key = store.get('kbKey', '');
+    if (!key) return;
+    fetch(phoneUrl() + 'kb.enc', { cache: 'no-cache' }).then(function (r) { return r.text(); })
+      .then(function (t) { return QKB.decrypt(t, key); })
+      .then(function (data) { QKB.load(data); log('knowledge base', QKB.version()); renderLive(); })
+      .catch(function (e) { log('knowledge base not loaded', e); });
+  }
+  function sendConfig() {
+    if (!relay) return;
+    var me = store.get('me', '');
+    relay.send({ t: 'config', dgKey: store.get('dgKey', ''), kbKey: store.get('kbKey', ''), ignoreNames: me ? [me] : [] });
+  }
 
   function init() {
     acvm = vm.addConsumerVM;
     log('ready');
+    loadKb();
     installCwidAutofill();
     installAddCounter();
     installShortcuts();
@@ -353,6 +480,8 @@
         var k = info.queue.replace(/^.*? - /, '') + ' · ' + (info.service || '—');
         s.byService[k] = (s.byService[k] || 0) + 1;
         store.set('stats', s);
+        // Added from the PC keyboard while the phone was filling: tell the phone so it moves to the next student.
+        if (!remoteAdding) last = { status: 'added', reqId: 'pc', ts: Date.now(), msg: 'Added ' + info.name + ' → ' + info.queue.replace(/^.*? - /, '') };
         renderPill(); publishState();
       });
       return r;
@@ -372,6 +501,8 @@
         if (q) { e.preventDefault(); openQueue(q.id); setTimeout(function () { focusEl('phoneInput'); }, 200); }
       } else if ((e.ctrlKey || e.altKey) && e.key === 'Enter' && vm.showAddConsumer()) {
         e.preventDefault(); acvm.addCustomerToQueue();
+      } else if (e.key === 'Escape' && live && live.countdown) {
+        e.preventDefault(); relay.send({ t: 'cancel-auto' }); live.countdown = null; renderLive(); toast('⏸ Auto-add stopped');
       } else if (e.key === 'Escape' && vm.showAddConsumer() && !(acvm.showWarning && acvm.showWarning())) {
         acvm.cancelAddConsumer();
       }
@@ -386,14 +517,15 @@
     relay = new QRelay.Relay({
       topic: pairing.topic, key: pairing.key, role: 'pc',
       onMessage: onPhoneMessage,
-      onStatus: function () { renderPill(); }
+      onStatus: function () { renderPill(); renderLive(); }
     });
     setTimeout(function () { publishState(true); }, 1500);
   }
   function onPhoneMessage(m) {
-    if (m.t === 'hello') publishState(true);
+    if (m.t === 'hello') { publishState(true); sendConfig(); }
     else if (m.t === 'fill') queueFill(m);
-    else if (m.t === 'cancel') { if (vm.showAddConsumer()) acvm.cancelAddConsumer(); currentLookup = null; publishState(); }
+    else if (m.t === 'live') { live = m; liveAt = Date.now(); renderLive(); }
+    else if (m.t === 'cancel') { if (vm.showAddConsumer()) acvm.cancelAddConsumer(); currentLookup = null; live = null; renderLive(); publishState(); }
   }
 
   var pendingFill = null, filling = false;
@@ -434,11 +566,11 @@
     var qid = f.queueId != null ? Number(f.queueId) : null;
     if (!vm.showAddConsumer()) {
       openQueue(qid || vm.selectedQueues()[0].id);
-      await sleep(300);
+      await waitFor(function () { return vm.showAddConsumer() && document.getElementById('phoneInput'); }, 500);
     } else if (qid && !(acvm.queueIds().length === 1 && Number(acvm.queueIds()[0]) === qid)) {
       acvm.queueIds([qid]);
-      await sleep(250);
     }
+    if (f.serviceId != null) await waitFor(function () { return hasService(f.serviceId); }, 300);
     if (f.serviceId != null) {
       var tt = (acvm.transactionTypes() || []).filter(function (t) { return String(t.id) === String(f.serviceId); })[0];
       if (tt) acvm.selectedTransactionType(tt.id);
@@ -450,12 +582,16 @@
       var prev = acvm.consumerInfoWS && ko.unwrap(acvm.consumerInfoWS.notes);
       var nm = String(acvm.consumerName() || '').trim();
       currentLookup = lk = { phone: f.phone, name: nm, cwid: cwidFrom(prev), known: !!(nm || prev) };
-      await sleep(600); // let anything else that reacts to the lookup (e.g. the old V5 script) finish first
+      await sleep(120);
     }
     if (f.name && !String(acvm.consumerName() || '').trim()) acvm.consumerName(f.name);
     var cwid = f.cwid || (lk && lk.phone === f.phone ? lk.cwid : null);
-    if (cwid || f.note) acvm.notes(formatNote(cwid, f.note));
-    else if (lk && lk.phone === f.phone && !acvm.notes()) acvm.notes(formatNote('', ''));
+    var note = cwid || f.note ? formatNote(cwid, f.note) : lk && lk.phone === f.phone && !acvm.notes() ? formatNote('', '') : null;
+    if (note) {
+      acvm.notes(note);
+      // If the old V5 script is still enabled it rewrites Notes ~400 ms after the lookup — put ours back.
+      setTimeout(function () { if (vm.showAddConsumer() && acvm.notes() !== note && /^\[CWID\]: \S* , \[Notes\]: $/.test(acvm.notes() || '')) acvm.notes(note); }, 500);
+    }
     publishState();
     if (f.add) await doAdd(f.reqId);
     else toast('📱 Filled from iPhone');
@@ -470,8 +606,10 @@
       return;
     }
     var info = describeForm();
+    remoteAdding = true;
     acvm.addCustomerToQueue();
     var res = await waitAddResult();
+    remoteAdding = false;
     if (res.ok) {
       var msg = 'Added ' + info.name + ' → ' + info.queue.replace(/^.*? - /, '') + (info.service ? ' · ' + info.service : '');
       setLast({ status: 'added', msg: msg, reqId: reqId });
@@ -481,7 +619,14 @@
       toast('⚠️ ' + res.msg);
     }
   }
-  function setLast(l) { last = l; publishState(); }
+  function setLast(l) { l.ts = Date.now(); last = l; publishState(); }
+  function hasService(id) { return (acvm.transactionTypes() || []).some(function (t) { return String(t.id) === String(id); }); }
+  function waitFor(cond, ms) {
+    return new Promise(function (res) {
+      var t0 = Date.now();
+      (function poll() { if (cond()) return res(true); if (Date.now() - t0 > ms) return res(false); setTimeout(poll, 25); })();
+    });
+  }
 
   function queuedCount(qid) {
     var el = document.getElementById(String(qid));
@@ -538,7 +683,23 @@
       '#qfd-panel kbd{background:#eee;border:1px solid #ccc;border-radius:3px;padding:0 4px;font-size:11px}',
       '#qfd-qr{display:flex;justify-content:center;padding:8px 0}#qfd-qr img,#qfd-qr canvas{width:200px;height:200px}',
       '#qfd-link{word-break:break-all;font-size:11px;color:#666}',
-      '#qfd-toasts{position:fixed;top:90px;right:14px;z-index:100000;display:flex;flex-direction:column;gap:6px;align-items:flex-end}',
+      '#qfd-toasts{position:fixed;bottom:66px;left:14px;z-index:100000;display:flex;flex-direction:column;gap:6px;align-items:flex-start}',
+      '#qfd-live{position:fixed;top:136px;right:14px;z-index:99998;width:390px;max-height:calc(100vh - 210px);overflow:auto;background:#fff;border:1px solid #c9c9c9;border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.18);font:13px/1.4 Arial,sans-serif;color:#222}',
+      '#qfd-live .hd{display:flex;align-items:center;gap:8px;padding:8px 12px;background:#f3f6f8;border-bottom:1px solid #e3e6ea;font-weight:bold;cursor:pointer}',
+      '#qfd-live .hd .dot{width:9px;height:9px;border-radius:50%;background:#bbb}#qfd-live .hd .dot.on{background:#e5484d;animation:qfdp 1.2s infinite}',
+      '@keyframes qfdp{50%{opacity:.35}}',
+      '#qfd-live .lang{background:#1a9ad6;color:#fff;border-radius:8px;padding:1px 7px;font-size:11px}',
+      '#qfd-live .cap{padding:8px 12px;color:#666;font-size:13px;max-height:66px;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end}',
+      '#qfd-live .cap b{color:#111;font-weight:normal}',
+      '#qfd-live .flds{display:flex;flex-wrap:wrap;gap:5px;padding:0 12px 8px}',
+      '#qfd-live .flds span{background:#eef1f4;border-radius:10px;padding:2px 8px;font-size:12px}#qfd-live .flds span.miss{color:#a0a6ad}',
+      '#qfd-live .cd{margin:0 12px 8px;padding:9px 12px;border-radius:8px;background:#c27c0e;color:#fff;font-size:15px;font-weight:bold}',
+      '#qfd-live .lk{margin:0 12px 8px;padding:7px 10px;border-radius:8px;font-size:13px}#qfd-live .lk.known{background:#e5f5eb;color:#1f7a40}#qfd-live .lk.new{background:#fbf0dc;color:#8a5a08}',
+      '#qfd-live .tip{margin:0 12px 10px;padding:9px 11px;border-radius:8px;background:#fff8e6;border:1px solid #f0d9a0}',
+      '#qfd-live .tip b{display:block;margin-bottom:3px;font-size:13.5px}#qfd-live .tip .say{font-size:14px;color:#111}',
+      '#qfd-live .tip ul{margin:5px 0 0;padding-left:17px;color:#555;font-size:12.5px}',
+      '#qfd-live .up{padding:6px 12px 10px;color:#666;font-size:12px;border-top:1px solid #eee}#qfd-live .up div{padding:1px 0}',
+      '#qfd-live.min .body{display:none}',
       '.qfd-toast{background:#333;color:#fff;padding:8px 12px;border-radius:6px;font:13px Arial,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.25);transition:opacity .4s}'
     ].join('\n');
     document.head.appendChild(css);
@@ -546,8 +707,11 @@
     pill.onclick = function () { panel.hidden = !panel.hidden; if (!panel.hidden) renderPanel(); };
     toastBox = document.createElement('div'); toastBox.id = 'qfd-toasts';
     panel = document.createElement('div'); panel.id = 'qfd-panel'; panel.hidden = true;
-    document.body.appendChild(pill); document.body.appendChild(panel); document.body.appendChild(toastBox);
+    liveBox = document.createElement('div'); liveBox.id = 'qfd-live'; liveBox.hidden = true;
+    if (store.get('liveMin', false)) liveBox.classList.add('min');
+    document.body.appendChild(pill); document.body.appendChild(panel); document.body.appendChild(toastBox); document.body.appendChild(liveBox);
     renderPill();
+    setInterval(renderLive, 5000);
   }
   function renderPill() {
     if (!pill) return;
@@ -570,8 +734,12 @@
       '<div style="font-size:11px;color:#888;margin-top:4px">Scan with the iPhone camera, open in Safari. Anyone with this link can fill this form — keep it private.</div></div></section>' +
       '<section><h4>Today · ' + s.total + ' students</h4><table>' + (rows || '<tr><td style="color:#999">Nobody yet</td><td></td></tr>') + '</table>' +
       '<div style="margin-top:6px"><button class="grey" id="qfd-reset">Reset today</button></div></section>' +
-      '<section><h4>Shortcuts</h4>' + qs + '<div><kbd>Ctrl+Enter</kbd> Add (submit)</div><div><kbd>Esc</kbd> Close the form</div>' +
+      '<section><h4>Shortcuts</h4>' + qs + '<div><kbd>Ctrl+Enter</kbd> Add (submit)</div><div><kbd>Esc</kbd> Stop the auto-add countdown / close the form</div>' +
       '<div style="color:#888;font-size:11px;margin-top:4px">Phone field is focused automatically; after the lookup the cursor jumps to Notes.</div></section>' +
+      '<section><h4>Setup</h4>' +
+      '<div style="margin-bottom:6px">Deepgram key (speech AI)<input id="qfd-dg" type="password" value="' + esc(store.get('dgKey', '')) + '" placeholder="paste key"></div>' +
+      '<div style="margin-bottom:6px">Your name (so it never mistakes you for the student)<input id="qfd-me" value="' + esc(store.get('me', '')) + '"></div>' +
+      '<div style="font-size:12px;color:#666">Knowledge base: ' + (QKB.loaded() ? '✅ ' + esc(QKB.version()) : store.get('kbKey', '') ? '⏳ loading / failed' : '❌ no key — open your setup link') + '</div></section>' +
       '<section><h4>Phone app address</h4><input id="qfd-url" value="' + esc(phoneUrl()) + '"></section>';
     panel.querySelector('#qfd-close').onclick = function () { panel.hidden = true; };
     panel.querySelector('#qfd-pair').onclick = showQr;
@@ -580,7 +748,52 @@
     };
     panel.querySelector('#qfd-reset').onclick = function () { store.set('stats', null); renderPill(); };
     panel.querySelector('#qfd-url').onchange = function (e) { store.set('phoneUrl', e.target.value.trim()); };
+    panel.querySelector('#qfd-dg').onchange = function (e) { store.set('dgKey', e.target.value.trim()); sendConfig(); toast('Sent to iPhone'); };
+    panel.querySelector('#qfd-me').onchange = function (e) { store.set('me', e.target.value.trim()); sendConfig(); };
   }
+  // ---------- live assistant overlay (captions, detected fields, countdown, tips) ----------
+  var LANG_NAMES = { es: 'Spanish', fr: 'French', de: 'German', hi: 'Hindi', ru: 'Russian', pt: 'Portuguese', ja: 'Japanese', it: 'Italian', nl: 'Dutch', vi: 'Vietnamese', zh: 'Chinese', ko: 'Korean', ar: 'Arabic' };
+  function renderLive() {
+    if (!liveBox) return;
+    var st = relay ? relay.status() : { peerOnline: false };
+    var fresh = live && Date.now() - liveAt < 60000;
+    liveBox.hidden = !st.peerOnline && !fresh;
+    if (liveBox.hidden) return;
+    var speaking = live && Date.now() - liveAt < 4000 && live.text;
+    var h = '<div class="hd" id="qfd-live-hd"><span class="dot' + (speaking ? ' on' : '') + '"></span>' +
+      (speaking ? 'Listening' : 'iPhone ready') +
+      (live && live.lang && live.lang !== 'en' ? ' <span class="lang">🌐 ' + esc(LANG_NAMES[live.lang] || live.lang) + '</span>' : '') +
+      '<span style="margin-left:auto;font-weight:normal;color:#888">' + (liveBox.classList.contains('min') ? '▸' : '▾') + '</span></div><div class="body">';
+    if (live && live.text) {
+      var words = live.text.split(/\s+/), cut = Math.max(0, words.length - 14);
+      h += '<div class="cap"><div>' + esc(words.slice(0, cut).join(' ')) + ' <b>' + esc(words.slice(cut).join(' ')) + '</b></div></div>';
+    }
+    if (live && live.fields) {
+      var f = live.fields, q = f.queueId != null && vm.queuesWS && vm.queuesWS.getQueueById(Number(f.queueId));
+      var tt = q && (acvm.transactionTypesForQueueId(q.id) || []).filter(function (t) { return String(t.id) === String(f.serviceId); })[0];
+      var chip = function (v, label) { return '<span' + (v ? '' : ' class="miss"') + '>' + esc(v || label) + '</span>'; };
+      h += '<div class="flds">' + chip(q && String(ko.unwrap(q.description)).replace(/^.*? - /, ''), 'queue?') + chip(tt && tt.description, 'service?') +
+        chip(f.phone && fmtPhone(f.phone), 'phone?') + chip(f.name || (currentLookup && currentLookup.name), 'name?') +
+        chip(f.cwid || (currentLookup && currentLookup.cwid), 'CWID?') + '</div>';
+    }
+    if (currentLookup) {
+      h += '<div class="lk ' + (currentLookup.known ? 'known' : 'new') + '">' + (currentLookup.known ?
+        '↩︎ Returning: ' + esc(currentLookup.name || 'name on file') + (currentLookup.cwid ? ' · CWID ' + esc(currentLookup.cwid) : ' · ask for CWID') :
+        (live && live.fields && live.fields.name && live.fields.cwid ? '★ New student — name + CWID captured' : '★ New number — get their name and CWID')) + '</div>';
+    }
+    if (live && live.countdown) h += '<div class="cd">Adding in ' + live.countdown + '… &nbsp;<span style="font-weight:normal">Esc or say "stop" to cancel</span></div>';
+    var tips = (live && live.tips || []).map(function (id) { return QKB.byId(id); }).filter(Boolean);
+    tips.forEach(function (c) {
+      h += '<div class="tip"><b>' + (c.kind === 'staff' ? '👤 ' : '💡 ') + esc(c.title) + '</b>' + (c.say ? '<div class="say">' + esc(c.say) + '</div>' : '') +
+        (c.facts.length ? '<ul>' + c.facts.slice(0, 4).map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' : '') + '</div>';
+    });
+    var up = QKB.loaded() ? QKB.upcoming(14) : [];
+    if (up.length && !tips.length) h += '<div class="up"><b>Coming up</b>' + up.slice(0, 4).map(function (d) { return '<div>' + esc(QKB.fmtDate(d.date)) + ' — ' + esc(d.label) + '</div>'; }).join('') + '</div>';
+    h += '</div>';
+    liveBox.innerHTML = h;
+    liveBox.querySelector('#qfd-live-hd').onclick = function () { liveBox.classList.toggle('min'); store.set('liveMin', liveBox.classList.contains('min')); renderLive(); };
+  }
+
   function showQr() {
     var box = panel.querySelector('#qfd-pairbox'), qr = panel.querySelector('#qfd-qr');
     box.hidden = false; qr.innerHTML = '';

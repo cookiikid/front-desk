@@ -14,13 +14,13 @@
   :root {
     --bg: #f4f5f7; --card: #ffffff; --text: #1d1f23; --muted: #6b7280; --line: #e3e5e9;
     --accent: #1a9ad6; --accent-ink: #ffffff; --ok: #1f9d4c; --warn: #c27c0e; --bad: #d13b3b;
-    --chip: #eef1f4; --field: #f7f8fa; --listen: #e5484d;
+    --chip: #eef1f4; --field: #f7f8fa; --listen: #e5484d; --tip: #fff8e6; --tip-line: #f0d9a0;
     color-scheme: light;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #16181c; --card: #22252b; --text: #eceef1; --muted: #9aa1ab; --line: #33373e;
-      --accent: #2aa7e3; --chip: #2c3037; --field: #1b1e23; color-scheme: dark;
+      --accent: #2aa7e3; --chip: #2c3037; --field: #1b1e23; --tip: #2b2618; --tip-line: #5a4a22; color-scheme: dark;
     }
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -33,14 +33,18 @@
   .dot.on { background: var(--ok); } .dot.half { background: var(--warn); }
   .iconbtn { background: none; border: 0; color: var(--muted); font-size: 22px; padding: 4px 6px; }
   .queues { display: flex; gap: 8px; margin-bottom: 10px; }
-  .qstat { flex: 1; background: var(--card); border-radius: 10px; padding: 7px 10px; font-size: 12px; color: var(--muted); border: 1px solid var(--line); }
+  .qstat { flex: 1; background: var(--card); border-radius: 10px; padding: 7px 10px; font-size: 12px; color: var(--muted); border: 1px solid var(--line); min-width: 0; }
   .qstat b { display: block; color: var(--text); font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .card { background: var(--card); border-radius: 14px; padding: 12px; margin-bottom: 12px; border: 1px solid var(--line); }
   .microw { display: flex; gap: 12px; align-items: stretch; }
-  #mic { flex: 0 0 88px; height: 88px; border-radius: 50%; border: 0; background: var(--accent); color: var(--accent-ink); font-size: 34px; position: relative; }
-  #mic.on { background: var(--listen); animation: pulse 1.4s infinite; }
-  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(229,72,77,.5); } 70% { box-shadow: 0 0 0 16px rgba(229,72,77,0); } 100% { box-shadow: 0 0 0 0 rgba(229,72,77,0); } }
-  #transcript { flex: 1; min-height: 88px; max-height: 140px; width: 100%; resize: none; border: 1px solid var(--line); border-radius: 10px; background: var(--field); color: var(--text); padding: 8px 10px; font: 15px/1.35 inherit; font-family: inherit; }
+  .micwrap { flex: 0 0 88px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  #mic { width: 88px; height: 88px; border-radius: 50%; border: 0; background: var(--accent); color: var(--accent-ink); font-size: 34px; position: relative; transition: box-shadow .08s; }
+  #mic.on { background: var(--listen); }
+  #meter { width: 88px; height: 6px; border-radius: 3px; background: var(--chip); overflow: hidden; }
+  #meter i { display: block; height: 100%; width: 0; background: var(--ok); transition: width .08s; }
+  #meter.loud i { background: var(--warn); }
+  #lang { font-size: 11px; color: var(--muted); min-height: 14px; text-align: center; }
+  #transcript { flex: 1; min-height: 120px; max-height: 160px; width: 100%; resize: none; border: 1px solid var(--line); border-radius: 10px; background: var(--field); color: var(--text); padding: 8px 10px; font: 15px/1.35 inherit; font-family: inherit; }
   .hint { font-size: 12px; color: var(--muted); margin-top: 6px; min-height: 16px; }
   .hint.err { color: var(--bad); }
   label.lbl { display: block; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin: 10px 0 6px; }
@@ -56,11 +60,15 @@
   .field input.auto { border-color: var(--accent); }
   .field .fmic { flex: 0 0 44px; height: 44px; border-radius: 10px; border: 1px solid var(--line); background: var(--chip); font-size: 18px; }
   .field .fmic.on { background: var(--listen); border-color: var(--listen); }
-  .from { font-size: 12px; color: var(--ok); margin-top: 4px; min-height: 0; }
   #lookup { font-size: 14px; padding: 10px 12px; border-radius: 10px; background: var(--chip); margin-bottom: 12px; }
   #lookup.known { background: rgba(31,157,76,.12); color: var(--ok); }
   #lookup.new { background: rgba(194,124,14,.12); color: var(--warn); }
   #lookup:empty { display: none; }
+  #tips:empty { display: none; }
+  .tip { background: var(--tip); border: 1px solid var(--tip-line); border-radius: 12px; padding: 10px 12px; margin-bottom: 10px; }
+  .tip b { display: block; font-size: 14px; margin-bottom: 3px; }
+  .tip .say { font-size: 15px; }
+  .tip ul { margin: 6px 0 0; padding-left: 18px; font-size: 13px; color: var(--muted); }
   .bar { position: fixed; left: 0; right: 0; bottom: 0; padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); background: var(--bg); border-top: 1px solid var(--line); display: flex; gap: 10px; }
   .bar button { border: 0; border-radius: 12px; font: inherit; font-weight: 700; padding: 15px 10px; }
   #next { flex: 0 0 34%; background: var(--chip); color: var(--text); }
@@ -69,12 +77,14 @@
   #add.counting { background: var(--warn); }
   #result { position: fixed; left: 14px; right: 14px; top: calc(env(safe-area-inset-top) + 10px); padding: 14px; border-radius: 12px; color: #fff; font-weight: 600; z-index: 10; }
   #result.ok { background: var(--ok); } #result.bad { background: var(--bad); }
-  dialog { border: 0; border-radius: 16px; background: var(--card); color: var(--text); width: min(92vw, 420px); padding: 16px; }
+  dialog { border: 0; border-radius: 16px; background: var(--card); color: var(--text); width: min(92vw, 440px); padding: 16px; max-height: 88vh; }
   dialog::backdrop { background: rgba(0,0,0,.4); }
   dialog h2 { margin: 0 0 10px; font-size: 18px; }
   dialog p, dialog li { font-size: 14px; color: var(--muted); }
-  .switch { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; font-size: 15px; }
-  .switch input { width: 22px; height: 22px; }
+  .switch { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 0; font-size: 15px; }
+  .switch input[type=checkbox] { width: 22px; height: 22px; flex: 0 0 auto; }
+  .switch select, .switch input[type=password], .switch input[type=text] { font: inherit; font-size: 14px; padding: 6px; border-radius: 8px; border: 1px solid var(--line); background: var(--field); color: var(--text); max-width: 55%; }
+  .switch input[type=range] { flex: 1; }
   .btn { border: 0; border-radius: 10px; padding: 11px 14px; font: inherit; font-weight: 600; background: var(--accent); color: var(--accent-ink); }
   .btn.grey { background: var(--chip); color: var(--text); }
   #pairScreen { padding-top: 30px; text-align: center; }
@@ -106,13 +116,18 @@
 
   <div class="card">
     <div class="microw">
-      <button id="mic" aria-label="Listen">🎙</button>
-      <textarea id="transcript" placeholder="Tap the mic and talk with the student. Or type here / use the keyboard mic."></textarea>
+      <div class="micwrap">
+        <button id="mic" aria-label="Listen">🎙</button>
+        <div id="meter"><i></i></div>
+        <div id="lang"></div>
+      </div>
+      <textarea id="transcript" placeholder="Tap the mic once — it stays on. Talk with the student normally; everything fills in by itself."></textarea>
     </div>
     <div class="hint" id="hint"></div>
   </div>
 
   <div id="lookup"></div>
+  <div id="tips"></div>
 
   <div class="card">
     <label class="lbl">Queue</label>
@@ -142,14 +157,22 @@
 
 <dialog id="settings">
   <h2>Settings</h2>
-  <label class="switch">Hands-free: auto-add when everything's filled <input type="checkbox" id="autoAdd"></label>
-  <label class="switch">Auto-fill the PC as soon as a phone # is heard <input type="checkbox" id="autoFill"></label>
-  <h2 style="margin-top:14px">Mic tips</h2>
+  <label class="switch">Hands-free: auto-add after a 3 s countdown <input type="checkbox" id="autoAdd"></label>
+  <label class="switch">Speech engine
+    <select id="engine"><option value="deepgram">Deepgram (accents, languages)</option><option value="apple">Apple (free, English)</option></select></label>
+  <label class="switch">Languages
+    <select id="language"><option value="multi">Auto-detect (English + Spanish + more)</option><option value="en">English only</option></select></label>
+  <label class="switch">Mic boost <input type="range" id="boost" min="1" max="8" step="0.5"><span id="boostVal"></span></label>
+  <label class="switch">Skip silence (saves Deepgram credit) <input type="checkbox" id="skipSilence"></label>
+  <label class="switch">Deepgram key <input type="password" id="dgKey" placeholder="set on the PC"></label>
+  <p id="engineInfo"></p>
+  <h2 style="margin-top:14px">Placing the phone</h2>
   <ul>
-    <li>Lay the phone flat on the desk between you and the student, bottom edge (the mic) toward them.</li>
-    <li>Numbers are the hardest part. For best accuracy tap the 🎤 next to a field — it listens for just that one thing.</li>
-    <li>Ask them to say the number in chunks: "972… 555… 1234."</li>
-    <li>If speech stops working: Settings → General → Keyboard → <b>Enable Dictation</b>, and Settings → Apps → Safari → Microphone → <b>Allow</b>. The keyboard's own 🎤 also works in any box.</li>
+    <li>Stand the phone up on the counter <b>on the student's side of the monitor</b> (or on top of it), bottom edge pointing at them. Every halving of the distance is like them speaking twice as loud.</li>
+    <li>Don't put it behind the monitor or flat behind your keyboard — the screen blocks the voice.</li>
+    <li>Watch the green bar under the mic while they talk: it should reach about half. If it barely moves, raise Mic boost; if it turns orange, lower it.</li>
+    <li>Keep the phone plugged in and this page open in Safari (the screen stays on by itself).</li>
+    <li>Say <b>"next student"</b> to clear, <b>"stop"</b> / <b>"wait"</b> to cancel an auto-add, <b>"go ahead"</b> to add now.</li>
   </ul>
   <div style="display:flex;gap:8px;justify-content:space-between;margin-top:12px">
     <button class="btn grey" id="unpair">Unpair</button>
@@ -374,19 +397,20 @@ var QRelay = (function () {
 /* QParse — turns what a student says into Qless form fields. */
 var QParse = (function () {
   'use strict';
-  var ONES = { zero: 0, oh: 0, o: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9 };
+  var ONES = { zero: 0, oh: 0, o: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
+    cero: 0, uno: 1, una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9 };
   var TEENS = { ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19 };
   var TENS = { twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
   var FILLER = { uh: 1, um: 1, umm: 1, uhh: 1, dash: 1, hyphen: 1, 'and': 0 };
-  var PHONE_CTX = /\b(phone|number|cell|call|text|mobile)\b/;
-  var ID_CTX = /\b(id|i\.d\.?|cwid|c\.?w\.?i\.?d|student\s+(id|number)|collin\s+id)\b/;
+  var PHONE_CTX = /(?:^|\s)(phone|number|cell|call|text|mobile|n[uú]mero|tel[eé]fono|celular)(?=\s|$)/;
+  var ID_CTX = /\b(id|i\.d\.?|cwid|c\.?w\.?i\.?d|student\s+(id|number)|collin\s+id|identificaci[oó]n|matr[ií]cula)\b/;
 
   function isDigitTok(t) { return /^\d+$/.test(t); }
 
   // "nine seven two, five five five ..." / "double five" / "twenty one" -> digit tokens
   function wordsToDigits(text) {
     var toks = text.toLowerCase().replace(/[()]/g, ' ').replace(/(\d)[-.](?=\d)/g, '$1').replace(/[,!?;:"]/g, ' ')
-      .replace(/(\D)\.(\s|$)/g, '$1 ').split(/\s+/).filter(Boolean);
+      .replace(/\.(\s|$)/g, ' ').split(/\s+/).filter(Boolean);
     var out = [];
     function numAt(i) { // parse a 0-99 number starting at i -> [value, tokensUsed, isTwoDigit]
       var t = toks[i];
@@ -462,11 +486,16 @@ var QParse = (function () {
     return s.toLowerCase().replace(/(^|[\s'-])([a-z])/g, function (m, a, b) { return a + b.toUpperCase(); });
   }
 
-  function extractName(text) {
-    var src = collapseSpelling(text), best = null;
-    var re = /\b(my name is|my name's|name is|name's|names|call me|i am|i'm|im|this is|it's|its)\s+([A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,3})/gi, m;
+  function ignored(word, ignore) {
+    return (ignore || []).some(function (n) { return n && n.split(/\s+/)[0].toLowerCase() === word.toLowerCase(); });
+  }
+  var L = "A-Za-zÀ-ÖØ-öø-ÿ";
+  var NAME_RE = new RegExp("(?:^|[^" + L + "])(my name is|my name's|name is|name's|names|call me|me llamo|mi nombre es|i am|i'm|im|this is|it's|its|soy)\\s+([" + L + "][" + L + "'-]*(?:\\s+[" + L + "][" + L + "'-]*){0,3})", 'gi');
+  function extractName(text, ignore) {
+    var src = collapseSpelling(text), best = null, re = NAME_RE, m;
+    re.lastIndex = 0;
     while ((m = re.exec(src))) {
-      var strong = /name|call me/i.test(m[1]);
+      var strong = /name|call me|llamo|nombre/i.test(m[1]);
       var words = m[2].split(/\s+/), keep = [];
       for (var i = 0; i < words.length && keep.length < 3; i++) {
         if (NAME_STOP.test(words[i])) break;
@@ -474,20 +503,21 @@ var QParse = (function () {
         if (!strong && !/^[A-Z]/.test(words[i])) break;
         keep.push(words[i]);
       }
-      if (keep.length) best = titleCase(keep.join(' '));
+      if (keep.length && !ignored(keep[0], ignore)) best = titleCase(keep.join(' '));
     }
     return best;
   }
 
   // Everything we can pull out of a transcript. Later mentions win (people correct themselves).
-  function extract(text) {
+  // opts.ignoreNames: people who are NOT the student (you, coworkers) — "Hi, I'm Ahmed, how can I help?"
+  function extract(text, opts) {
     var res = {};
     digitRuns(text).forEach(function (r) {
       var c = classifyRun(r);
       if (c.phone) res.phone = c.phone;
       if (c.cwid) res.cwid = c.cwid;
     });
-    var name = extractName(text);
+    var name = extractName(text, opts && opts.ignoreNames);
     if (name) res.name = name;
     return res;
   }
@@ -515,8 +545,8 @@ var QParse = (function () {
   }
 
   // ---------- which queue / type of service ----------
-  var FA_SAY = /financial aid|\bfafsa\b|\btasfa\b|\bpell\b|\bgrants?\b|\bloans?\b|scholarship|refund|disburs|verification|\baward|\bsap\b|work.?study|veteran|\bva\b|gi bill|military|hazlewood|\bmoney\b|pay for (?:school|college|classes)/g;
-  var ENR_SAY = /advis|admission|\bapply|application|\bdegree|\benroll|\bregist|transcript|\bhold\b|\bclass(?:es)?\b|residen|\btsi\b|graduat|\bdrop|withdraw|\bmajor\b|\bschedule/g;
+  var FA_SAY = /financial aid|ayuda financiera|\bbecas?\b|pr[eé]stamo|reembolso|veterano|hazlewood|foster care|fire science|law enforcement|\bpow\b|prisoner of war|\bfafsa\b|\btasfa\b|\bpell\b|\bgrants?\b|\bloans?\b|scholarship|refund|disburs|verification|\baward|\bsap\b|work.?study|veteran|\bva\b|gi bill|military|hazlewood|\bmoney\b|pay for (?:school|college|classes)/g;
+  var ENR_SAY = /senior citizen|65 (?:or|and) older|highest.ranking|dual credit|tuition plan|inscrib|matr[ií]cul|consejer|asesor|solicitud|aplicar|\bclases\b|advis|admission|\bapply|application|\bdegree|\benroll|\bregist|transcript|\bhold\b|\bclass(?:es)?\b|residen|\btsi\b|graduat|\bdrop|withdraw|\bmajor\b|\bschedule/g;
   var GROUPS = [
     { svc: /degree|audit|graduat|\bplan\b/, say: /degree plan|degree audit|graduat|what classes|which classes|classes (?:i|do i) need|transfer plan|\bdegree\b|\bmajor\b/g },
     { svc: /advis|counsel/, say: /advis|counsel|classes to take|pick (?:my )?classes|meet with (?:someone|an? )|talk to (?:someone|an? )/g },
@@ -563,11 +593,309 @@ var QParse = (function () {
     return best || {};
   }
 
+  // Hands-free voice commands (said by you, the desk worker).
+  function command(text) {
+    var t = (text || '').toLowerCase();
+    if (/\b(next student|next please|next one)\b/.test(t)) return 'next';
+    if (/\b(stop|cancel|wait|hold on|never ?mind|don'?t add)\b/.test(t)) return 'cancel';
+    if (/\b(add (?:them|her|him|it)|go ahead|send it)\b/.test(t)) return 'add';
+    return null;
+  }
+
   function formatPhone(d) {
     return d && d.length === 10 ? d.slice(0, 3) + '-' + d.slice(3, 6) + '-' + d.slice(6) : (d || '');
   }
 
-  return { extract: extract, parseField: parseField, classify: classify, formatPhone: formatPhone, wordsToDigits: wordsToDigits };
+  return { extract: extract, parseField: parseField, classify: classify, command: command, formatPhone: formatPhone, wordsToDigits: wordsToDigits };
+})();
+
+</script>
+<script>
+/* QSpeech — microphone -> text.
+ *  'deepgram': raw mic (no iOS voice processing, which suppresses far-away voices) -> boost + compressor
+ *              -> 16 kHz PCM -> Deepgram Nova-3 streaming (multilingual, keyterms). Silence is skipped to save money.
+ *  'apple':    Safari's built-in webkitSpeechRecognition (free fallback).
+ * Both call onText(text, isFinal) with the same contract: interim text replaces the previous interim, a final commits it. */
+var QSpeech = (function () {
+  'use strict';
+
+  var WORKLET = [
+    'class Down16k extends AudioWorkletProcessor {',
+    '  constructor() { super(); this.ratio = sampleRate / 16000; this.pos = 0; this.sum = 0; this.cnt = 0; this.frame = new Int16Array(800); this.n = 0; }',
+    '  process(inputs) {',
+    '    var ch = inputs[0] && inputs[0][0]; if (!ch) return true;',
+    '    for (var i = 0; i < ch.length; i++) {',
+    '      this.sum += ch[i]; this.cnt++; this.pos += 1;',
+    '      if (this.pos >= this.ratio) {',
+    '        this.pos -= this.ratio; var v = this.sum / this.cnt; this.sum = 0; this.cnt = 0;',
+    '        v = v > 1 ? 1 : v < -1 ? -1 : v;',
+    '        this.frame[this.n++] = v < 0 ? v * 32768 : v * 32767;',
+    '        if (this.n === this.frame.length) { this.port.postMessage(this.frame.buffer, [this.frame.buffer]); this.frame = new Int16Array(800); this.n = 0; }',
+    '      }',
+    '    }',
+    '    return true;',
+    '  }',
+    '}',
+    "registerProcessor('down16k', Down16k);"
+  ].join('\n');
+
+  function rms(i16) {
+    var s = 0;
+    for (var i = 0; i < i16.length; i++) { var v = i16[i] / 32768; s += v * v; }
+    return Math.sqrt(s / i16.length);
+  }
+
+  // ---------------- Deepgram ----------------
+  function Deepgram(o) {
+    this.o = o; this.running = false; this.boost = o.boost || 3; this.queue = [];
+  }
+  Deepgram.prototype.url = function () {
+    var p = [
+      'model=nova-3', 'language=' + (this.o.language || 'multi'), 'encoding=linear16', 'sample_rate=16000', 'channels=1',
+      'interim_results=true', 'smart_format=true', 'numerals=true', 'punctuate=true',
+      'endpointing=' + (this.o.language === 'en' ? 250 : 100), 'utterance_end_ms=1000', 'vad_events=true', 'mip_opt_out=true'
+    ];
+    (this.o.keyterms || []).forEach(function (k) { p.push('keyterm=' + encodeURIComponent(k)); });
+    return 'wss://api.deepgram.com/v1/listen?' + p.join('&');
+  };
+  Deepgram.prototype.start = async function () {
+    var self = this;
+    if (self.running) return;
+    self.running = true;
+    try {
+      self.stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 }
+      });
+    } catch (e) {
+      self.running = false;
+      self.o.onStatus('Microphone blocked — allow it for this site in Safari settings (aA → Website Settings → Microphone).', true);
+      throw e;
+    }
+    var ctx = self.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (ctx.state === 'suspended') await ctx.resume();
+    var url = URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' }));
+    await ctx.audioWorklet.addModule(url);
+    var src = ctx.createMediaStreamSource(self.stream);
+    var hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 90; // HVAC rumble / desk thumps
+    self.gain = ctx.createGain(); self.gain.gain.value = self.boost;
+    var comp = ctx.createDynamicsCompressor(); // lifts quiet voices, tames loud ones
+    comp.threshold.value = -38; comp.knee.value = 18; comp.ratio.value = 6; comp.attack.value = 0.003; comp.release.value = 0.25;
+    var node = new AudioWorkletNode(ctx, 'down16k');
+    var mute = ctx.createGain(); mute.gain.value = 0;
+    src.connect(hp); hp.connect(self.gain); self.gain.connect(comp); comp.connect(node); node.connect(mute); mute.connect(ctx.destination);
+    self.nodes = [src, hp, self.gain, comp, node, mute];
+
+    // Voice-activity gate: adaptive noise floor; keep 400 ms of pre-roll so first syllables aren't lost.
+    var floor = 0.01, hang = 0, pre = [];
+    node.port.onmessage = function (ev) {
+      var frame = new Int16Array(ev.data), level = rms(frame);
+      floor = level < floor ? floor * 0.9 + level * 0.1 : floor * 0.999 + level * 0.001;
+      var speaking = level > Math.max(floor * 2.2, 0.006);
+      if (speaking) hang = 30; else if (hang > 0) hang--; // 30 x 50 ms = 1.5 s hangover
+      var send = !self.o.skipSilence || hang > 0;
+      self.o.onLevel && self.o.onLevel(level, speaking);
+      if (send) {
+        while (pre.length) self.send(pre.shift());
+        self.send(frame.buffer);
+      } else {
+        pre.push(frame.buffer); if (pre.length > 8) pre.shift();
+      }
+    };
+    self.connect();
+  };
+  Deepgram.prototype.send = function (buf) {
+    if (this.ws && this.ws.readyState === 1) { this.ws.send(buf); this.lastSend = Date.now(); }
+  };
+  Deepgram.prototype.connect = function () {
+    var self = this;
+    if (!self.running) return;
+    var ws;
+    try { ws = new WebSocket(self.url(), ['token', self.o.key]); } catch (e) { self.o.onStatus('Could not reach Deepgram.', true); return; }
+    self.ws = ws; ws.binaryType = 'arraybuffer';
+    var opened = false;
+    ws.onopen = function () {
+      opened = true; self.fails = 0; self.lastSend = Date.now();
+      self.o.onStatus('Listening (Deepgram)…');
+      clearInterval(self.ka);
+      self.ka = setInterval(function () {
+        if (ws.readyState === 1 && Date.now() - self.lastSend > 4000) { ws.send(JSON.stringify({ type: 'KeepAlive' })); self.lastSend = Date.now(); }
+      }, 1000);
+    };
+    ws.onmessage = function (ev) {
+      var m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+      if (m.type === 'Results') {
+        var alt = m.channel && m.channel.alternatives && m.channel.alternatives[0];
+        if (!alt) return;
+        if (alt.languages && alt.languages.length && self.o.onLang) self.o.onLang(alt.languages[0]);
+        if (alt.transcript || m.is_final) self.o.onText(alt.transcript || '', !!m.is_final, !!m.speech_final);
+      } else if (m.type === 'UtteranceEnd') {
+        self.o.onText('', true, true);
+      }
+    };
+    ws.onclose = function (ev) {
+      clearInterval(self.ka);
+      if (!self.running) return;
+      if (!opened) {
+        self.fails = (self.fails || 0) + 1;
+        if (self.fails >= 3) {
+          self.o.onStatus('Deepgram refused the connection (check the API key / credit). Switching to Apple speech.', true);
+          self.o.onFatal && self.o.onFatal();
+          return;
+        }
+      }
+      setTimeout(function () { self.connect(); }, Math.min(500 * (self.fails || 1), 3000));
+    };
+    ws.onerror = function () {};
+  };
+  Deepgram.prototype.setBoost = function (x) { this.boost = x; if (this.gain) this.gain.gain.value = x; };
+  Deepgram.prototype.stop = function () {
+    this.running = false; clearInterval(this.ka);
+    try { if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify({ type: 'CloseStream' })); } catch (e) {}
+    try { this.ws && this.ws.close(); } catch (e) {}
+    (this.nodes || []).forEach(function (n) { try { n.disconnect(); } catch (e) {} });
+    if (this.stream) this.stream.getTracks().forEach(function (t) { t.stop(); });
+    if (this.ctx) this.ctx.close().catch(function () {});
+    this.ws = this.stream = this.ctx = null;
+  };
+  // Throw away the in-flight utterance (new student / field mic).
+  Deepgram.prototype.flush = function () {};
+
+  // ---------------- Apple (Safari) ----------------
+  function Apple(o) { this.o = o; this.running = false; }
+  Apple.supported = function () { return !!(window.SpeechRecognition || window.webkitSpeechRecognition); };
+  Apple.prototype.start = function () {
+    var self = this, SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { self.o.onStatus('Speech recognition is not available here — open the page in Safari.', true); return Promise.reject(new Error('no SR')); }
+    var isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    var r = self.rec = new SR();
+    r.lang = self.o.appleLang || 'en-US'; r.interimResults = true; r.maxAlternatives = 1;
+    r.continuous = !isIOS; // iOS repeats phrases in continuous mode; restart per utterance instead
+    var session = '';
+    r.onresult = function (e) {
+      var t = '';
+      for (var i = 0; i < e.results.length; i++) t += e.results[i][0].transcript + ' ';
+      session = t; self.o.onText(t, false, false);
+    };
+    r.onerror = function (e) {
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        self.running = false;
+        self.o.onStatus('Mic or speech is blocked. Allow the microphone for this site and turn on Dictation (Settings → General → Keyboard).', true);
+      }
+    };
+    r.onend = function () {
+      if (session.trim()) self.o.onText(session, true, true);
+      session = '';
+      if (self.running) setTimeout(function () { try { r.start(); } catch (err) { self.running = false; self.o.onStatus('Tap the mic to keep listening.', true); } }, isIOS ? 120 : 30);
+    };
+    self.running = true;
+    try { r.start(); } catch (e) {}
+    self.o.onStatus('Listening (Apple speech)…');
+    return Promise.resolve();
+  };
+  Apple.prototype.setBoost = function () {};
+  Apple.prototype.stop = function () { this.running = false; try { this.rec && this.rec.abort(); } catch (e) {} };
+  Apple.prototype.flush = function () { try { this.rec && this.rec.abort(); } catch (e) {} };
+
+  return {
+    create: function (engine, o) { return engine === 'deepgram' ? new Deepgram(o) : new Apple(o); },
+    appleSupported: Apple.supported
+  };
+})();
+
+</script>
+<script>
+/* QKB — the front-desk knowledge base: instant tips from what's being said.
+ * kb.json (private) is published only as AES-GCM ciphertext (kb.enc); the key lives on the PC + phone. */
+var QKB = (function () {
+  'use strict';
+  var kb = null, index = [];
+
+  function unb64u(str) {
+    str = str.replace(/-/g, '+').replace(/_/g, '/');
+    while (str.length % 4) str += '=';
+    var s = atob(str), out = new Uint8Array(s.length);
+    for (var i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+    return out;
+  }
+  async function decrypt(b64, keyB64u) {
+    var raw = unb64u(b64.trim());
+    var key = await crypto.subtle.importKey('raw', unb64u(keyB64u), 'AES-GCM', false, ['decrypt']);
+    var plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: raw.subarray(0, 12) }, key, raw.subarray(12));
+    return JSON.parse(new TextDecoder().decode(plain));
+  }
+
+  // lowercase, no accents/punctuation, plural "s" dropped so "transcripts" matches "transcript"
+  function norm(s) {
+    return ' ' + String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-z0-9+@.\s]/g, ' ').replace(/\.+(\s|$)/g, ' ').split(/\s+/).filter(Boolean)
+      .map(function (w) { return w.length > 3 && /[^s]s$/.test(w) ? w.slice(0, -1) : w; }).join(' ') + ' ';
+  }
+
+  function load(data) {
+    kb = data; index = [];
+    (kb.cards || []).forEach(function (c) {
+      index.push({ card: c, triggers: (c.triggers || []).map(function (t) { return norm(t); }) });
+    });
+    (kb.staff || []).forEach(function (p) {
+      var n = norm(p.name);
+      if (n.trim().split(' ').length < 2) return; // full names only, to avoid false hits
+      index.push({
+        card: { id: 'staff:' + p.name, kind: 'staff', title: p.name, say: p.title + (p.where ? ' — ' + p.where : ''), facts: [p.phone, p.email].filter(Boolean) },
+        triggers: [n]
+      });
+    });
+    return kb;
+  }
+
+  function upcoming(days, re) {
+    if (!kb || !kb.dates) return [];
+    var now = new Date(); now.setHours(0, 0, 0, 0);
+    var end = new Date(now.getTime() + days * 864e5);
+    return kb.dates.filter(function (d) {
+      var t = new Date(d.date + 'T00:00:00');
+      return t >= now && t <= end && (!re || new RegExp(re, 'i').test(d.label));
+    });
+  }
+  function fmtDate(iso) {
+    var d = new Date(iso + 'T00:00:00');
+    return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  }
+
+  // text -> best cards. Recent words count more (the last ~25 words are what's being talked about now).
+  // opts.skip: regex of card ids to leave out (e.g. the "find your CWID" card once we already have it)
+  function match(text, max, opts) {
+    if (!kb) return [];
+    var skip = opts && opts.skip;
+    var all = norm(text), recent = norm(String(text || '').split(/\s+/).slice(-25).join(' '));
+    var scored = [];
+    index.forEach(function (e) {
+      var s = 0;
+      e.triggers.forEach(function (t) {
+        if (all.indexOf(t) >= 0) s += t.length > 12 ? 3 : 2;
+        if (recent.indexOf(t) >= 0) s += 1;
+      });
+      if (s && !(skip && skip.test(e.card.id))) scored.push({ s: s + (e.card.priority || 0), card: e.card });
+    });
+    scored.sort(function (a, b) { return b.s - a.s; });
+    return scored.slice(0, max || 2).map(function (x) { return render(x.card); });
+  }
+  function byId(id) {
+    var e = index.filter(function (x) { return x.card.id === id; })[0];
+    return e ? render(e.card) : null;
+  }
+  // Attach live dates (e.g. next withdraw deadline) to a card.
+  function render(c) {
+    var out = { id: c.id, kind: c.kind || 'tip', title: c.title, say: c.say, facts: (c.facts || []).slice(), queue: c.queue || null };
+    if (c.dates) upcoming(400, c.dates).slice(0, 3).forEach(function (d) { out.facts.push(fmtDate(d.date) + ': ' + d.label); });
+    return out;
+  }
+
+  return {
+    decrypt: decrypt, load: load, match: match, byId: byId, upcoming: upcoming, fmtDate: fmtDate,
+    keyterms: function () { return (kb && kb.keyterms) || []; },
+    loaded: function () { return !!kb; },
+    version: function () { return kb && kb.version; }
+  };
 })();
 
 </script>
@@ -581,6 +909,7 @@ var QParse = (function () {
   };
   var digits = function (s) { return String(s || '').replace(/\D/g, ''); };
   var shortQ = function (n) { return String(n || '').replace(/^.*? - /, ''); };
+  var LANGS = { en: 'English', es: 'Spanish', fr: 'French', de: 'German', hi: 'Hindi', ru: 'Russian', pt: 'Portuguese', ja: 'Japanese', it: 'Italian', nl: 'Dutch', vi: 'Vietnamese', zh: 'Chinese', ko: 'Korean', ar: 'Arabic' };
 
   // ---------- pairing ----------
   var pairing = null;
@@ -600,18 +929,22 @@ var QParse = (function () {
   $('#app').hidden = false;
 
   // ---------- state ----------
-  var pc = null, pcOnline = false, brokers = 0;
-  var form, manual, committed, session, focus, pendingAdd, lastSynced, autoCancelled;
-  var settings = { autoAdd: store.get('autoAdd', false), autoFill: store.get('autoFill', true) };
+  var pc = null, pcOnline = false, brokers = 0, cfg = store.get('cfg', {});
+  var form, manual, committed, session, focus, pendingAdd, lastSynced, autoCancelled, studentStart, lastTipSig;
+  var settings = {
+    autoAdd: store.get('autoAdd', true), engine: store.get('engine', 'deepgram'), language: store.get('language', 'multi'),
+    boost: store.get('boost', 3), skipSilence: store.get('skipSilence', true)
+  };
   function reset() {
     form = { queueId: null, serviceId: null, phone: '', name: '', cwid: '', note: '' };
     manual = {}; committed = ''; session = ''; focus = null; pendingAdd = null; lastSynced = ''; autoCancelled = false;
+    studentStart = Date.now(); lastTipSig = '';
   }
   reset();
 
   var relay = new QRelay.Relay({
     topic: pairing.topic, key: pairing.key, role: 'phone',
-    onMessage: function (m) { if (m.t === 'state') onPcState(m); },
+    onMessage: onPcMessage,
     onStatus: function (s) {
       var was = brokers; brokers = s.brokers; pcOnline = s.peerOnline;
       if (!was && brokers) relay.send({ t: 'hello' });
@@ -619,9 +952,25 @@ var QParse = (function () {
     }
   });
   document.addEventListener('visibilitychange', function () {
-    if (document.visibilityState === 'visible') { relay.kick(); relay.send({ t: 'hello' }); if (listening) acquireWakeLock(); }
+    if (document.visibilityState === 'visible') {
+      relay.kick(); relay.send({ t: 'hello' });
+      if (listening) { acquireWakeLock(); restartEngine(); }
+    }
   });
 
+  function onPcMessage(m) {
+    if (m.t === 'state') onPcState(m);
+    else if (m.t === 'config') onConfig(m);
+    else if (m.t === 'cancel-auto') cancelAuto(true);
+  }
+  function onConfig(m) {
+    var changed = m.dgKey !== cfg.dgKey || m.kbKey !== cfg.kbKey;
+    cfg = { dgKey: m.dgKey || cfg.dgKey || '', kbKey: m.kbKey || cfg.kbKey || '', ignoreNames: m.ignoreNames || [] };
+    store.set('cfg', cfg);
+    if (changed || !QKB.loaded()) loadKb();
+    if (changed && listening) restartEngine();
+    renderEngineInfo();
+  }
   function onPcState(m) {
     pc = m;
     if (form.queueId == null && m.queues.length) {
@@ -629,63 +978,76 @@ var QParse = (function () {
       if (c.queueId != null) { form.queueId = c.queueId; form.serviceId = c.serviceId; }
     }
     var l = m.last;
-    if (l && pendingAdd && l.reqId === pendingAdd) {
+    if (l && ((pendingAdd && l.reqId === pendingAdd) || (l.reqId === 'pc' && l.ts > studentStart && l.status === 'added'))) {
       pendingAdd = null;
-      if (l.status === 'added') { showResult(true, '✅ ' + l.msg); setTimeout(function () { nextStudent(false); }, 1800); }
+      if (l.status === 'added') { showResult(true, '✅ ' + l.msg); setTimeout(function () { nextStudent(false); }, 1200); }
       else showResult(false, '⚠️ ' + l.msg);
     }
-    renderAll();
+    renderAll(); maybeAutoAdd();
   }
 
-  // ---------- speech ----------
-  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  var isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-  var rec = null, listening = false, wakeLock = null;
+  // ---------- knowledge base ----------
+  function loadKb() {
+    if (!cfg.kbKey) return;
+    fetch('kb.enc', { cache: 'no-cache' }).then(function (r) { return r.text(); })
+      .then(function (t) { return QKB.decrypt(t, cfg.kbKey); })
+      .then(function (data) { QKB.load(data); renderTips(); })
+      .catch(function () { hint('Could not unlock the knowledge base (re-pair from the PC).', true); });
+  }
+  if (cfg.kbKey) loadKb();
 
+  // ---------- speech ----------
+  var engine = null, listening = false, wakeLock = null, usingEngine = null;
   function hint(msg, err) { var h = $('#hint'); h.textContent = msg || ''; h.className = 'hint' + (err ? ' err' : ''); }
   function acquireWakeLock() {
     if (navigator.wakeLock && !wakeLock) navigator.wakeLock.request('screen').then(function (w) { wakeLock = w; w.addEventListener('release', function () { wakeLock = null; }); }).catch(function () {});
   }
-  function makeRec() {
-    var r = new SR();
-    r.lang = 'en-US'; r.interimResults = true; r.maxAlternatives = 1;
-    r.continuous = !isIOS; // iOS repeats phrases in continuous mode; restart per utterance instead
-    r.onresult = function (e) {
-      var t = '';
-      for (var i = 0; i < e.results.length; i++) t += e.results[i][0].transcript + ' ';
-      session = t; onTranscript();
-    };
-    r.onerror = function (e) {
-      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-        listening = false; renderMic();
-        hint('Mic or speech is blocked. Allow the microphone for this site, and turn on Dictation (Settings → General → Keyboard). The keyboard 🎤 works as a backup.', true);
-      } else if (e.error === 'audio-capture') { hint('No microphone available.', true); }
-    };
-    r.onend = function () {
-      commitSession();
-      if (listening) setTimeout(function () { try { r.start(); } catch (err) { listening = false; renderMic(); hint('Tap the mic to keep listening.'); } }, isIOS ? 120 : 30);
-      else renderMic();
-    };
-    return r;
+  function wantedEngine() { return settings.engine === 'deepgram' && cfg.dgKey ? 'deepgram' : 'apple'; }
+  function makeEngine(kind) {
+    return QSpeech.create(kind, {
+      key: cfg.dgKey, language: settings.language, boost: settings.boost, skipSilence: settings.skipSilence,
+      keyterms: QKB.keyterms().length ? QKB.keyterms() : ['Collin', 'CWID', 'FAFSA', 'TASFA', 'Hazlewood', 'TSI', 'Workday', 'Qless', 'Wylie', 'transcript', 'advising', 'degree plan'],
+      appleLang: settings.language === 'multi' ? (navigator.language || 'en-US') : 'en-US',
+      onText: onSpeech,
+      onLevel: renderLevel,
+      onLang: function (code) { var l = LANGS[code] || code; $('#lang').textContent = code && code !== 'en' ? '🌐 ' + l : ''; sendLive(code); },
+      onStatus: function (msg, err) { hint(msg, err); },
+      onFatal: function () { usingEngine = 'apple'; startEngine('apple'); }
+    });
   }
+  function startEngine(kind) {
+    if (engine) engine.stop();
+    usingEngine = kind;
+    engine = makeEngine(kind);
+    engine.start().catch(function () { listening = false; renderMic(); });
+  }
+  function restartEngine() { if (listening) startEngine(wantedEngine()); }
   function startListening() {
-    if (!SR) { hint('Speech recognition is not available in this browser — open this page in Safari, or use the keyboard 🎤.', true); return; }
-    if (!rec) rec = makeRec();
-    listening = true;
-    try { rec.start(); } catch (e) { /* already running */ }
-    acquireWakeLock(); renderMic(); hint('Listening… talk normally with the student.');
+    listening = true; renderMic(); acquireWakeLock();
+    startEngine(wantedEngine());
+    if (!cfg.dgKey && settings.engine === 'deepgram') hint('Using Apple speech — add a Deepgram key on the PC for accents and other languages.');
   }
   function stopListening() {
     listening = false; focus = null;
-    try { rec && rec.stop(); } catch (e) {}
+    if (engine) engine.stop();
+    engine = null;
     if (wakeLock) { wakeLock.release(); wakeLock = null; }
-    renderMic(); renderFields(); hint('');
+    renderMic(); renderFields(); hint(''); renderLevel(0, false);
   }
-  function commitSession() {
-    if (session.trim()) committed += session.trim() + '. ';
+
+  function onSpeech(text, isFinal) {
+    if (!isFinal) { session = text; onTranscript(); return; }
+    var seg = (text || session).trim();
     session = '';
-    if (focus && focus.got) { focus = null; renderFields(); hint(listening ? 'Listening…' : ''); }
-    renderTranscript();
+    if (seg) {
+      committed += seg + ' ';
+      var cmd = QParse.command(seg);
+      if (cmd === 'next') { nextStudent(true); return; }
+      if (cmd === 'cancel' && autoTimer) cancelAuto(false);
+      if (cmd === 'add' && canAdd()) sendAdd();
+      if (focus && focus.got) { focus = null; hint(listening ? 'Listening…' : ''); }
+    }
+    onTranscript();
   }
 
   function onTranscript() {
@@ -696,10 +1058,10 @@ var QParse = (function () {
       if (val) {
         if (focus.field === 'phone') val = val.slice(0, 10);
         form[focus.field] = val; manual[focus.field] = true; focus.got = true;
-        if (focus.field === 'phone' && val.length === 10) { focus = null; hint('Got the number. Listening…'); }
+        if (focus.field === 'phone' && val.length === 10) { focus = null; hint('Got the number.'); }
       }
     }
-    var ex = QParse.extract(text);
+    var ex = QParse.extract(text, { ignoreNames: cfg.ignoreNames });
     ['phone', 'name', 'cwid'].forEach(function (k) { if (ex[k] && !manual[k]) form[k] = ex[k]; });
     if (pc && !manual.queueId) {
       var c = QParse.classify(text, pc.queues);
@@ -709,24 +1071,38 @@ var QParse = (function () {
         if (c.serviceId != null && !manual.serviceId) form.serviceId = c.serviceId;
       }
     }
-    renderFields(); renderAdd(); scheduleSync();
+    renderFields(); renderTips(); renderAdd(); scheduleSync(); sendLive();
   }
 
   // ---------- sync with PC ----------
-  var syncTimer = null, autoTimer = null, autoLeft = 0;
+  var syncTimer = null, autoTimer = null, autoLeft = 0, liveTimer = null, lastLive = '', lastLang = '';
   function payload() {
     return { queueId: form.queueId, serviceId: form.serviceId, phone: form.phone.length === 10 ? form.phone : '', name: form.name.trim(), cwid: form.cwid.trim(), note: form.note.trim() };
   }
   function scheduleSync() {
     clearTimeout(syncTimer);
     syncTimer = setTimeout(function () {
-      if (!settings.autoFill || form.phone.length !== 10 || !pcOnline) return;
+      // Open the PC form as soon as we know the queue OR have a full phone number.
+      if (!pcOnline || (form.queueId == null && form.phone.length !== 10)) return;
       var p = payload(), sig = JSON.stringify(p);
       if (sig === lastSynced) return;
       lastSynced = sig;
       relay.send(Object.assign({ t: 'fill', reqId: 'f' + Date.now() }, p));
-    }, 700);
+    }, 120);
     maybeAutoAdd();
+  }
+  // Live captions + tips for the PC screen.
+  function sendLive(lang) {
+    if (lang) lastLang = lang;
+    clearTimeout(liveTimer);
+    liveTimer = setTimeout(function () {
+      var text = (committed + session).slice(-260);
+      var tips = tipCards().map(function (c) { return c.id; });
+      var sig = text + '|' + tips.join(',') + '|' + lastLang + '|' + (autoTimer ? autoLeft : '');
+      if (sig === lastLive || !pcOnline) return;
+      lastLive = sig;
+      relay.send({ t: 'live', text: text, tips: tips, lang: lastLang, countdown: autoTimer ? autoLeft : null, fields: payload() });
+    }, 250);
   }
   function lookupFor() { return pc && pc.lookup && pc.lookup.phone === form.phone ? pc.lookup : null; }
   function knownName() { var lk = lookupFor(); return form.name.trim() || (lk && lk.name) || ''; }
@@ -743,27 +1119,38 @@ var QParse = (function () {
     pendingAdd = 'a' + Date.now();
     relay.send(Object.assign({ t: 'fill', add: true, reqId: pendingAdd }, payload()));
     lastSynced = JSON.stringify(payload());
-    renderAdd();
+    renderAdd(); sendLive();
     setTimeout(function () { if (pendingAdd) { pendingAdd = null; showResult(false, '⚠️ No answer from the PC — check it.'); renderAdd(); } }, 15000);
   }
+  var autoSig = '';
   function maybeAutoAdd() {
     if (!settings.autoAdd) return;
-    clearInterval(autoTimer); autoTimer = null;
-    if (!readyForAuto()) { renderAdd(); return; }
-    autoLeft = 4;
+    var sig = JSON.stringify(payload());
+    if (!readyForAuto()) { if (autoTimer) { clearInterval(autoTimer); autoTimer = null; } renderAdd(); return; }
+    if (autoTimer && sig === autoSig) return; // already counting for exactly this form
+    autoSig = sig;
+    clearInterval(autoTimer);
+    autoLeft = 3;
     autoTimer = setInterval(function () {
       autoLeft--;
-      if (autoLeft <= 0) sendAdd(); else renderAdd();
+      if (autoLeft <= 0) sendAdd(); else { renderAdd(); sendLive(); }
     }, 1000);
-    renderAdd();
+    renderAdd(); sendLive();
+  }
+  function cancelAuto(fromPc) {
+    if (!autoTimer) return;
+    clearInterval(autoTimer); autoTimer = null; autoCancelled = true;
+    renderAdd(); sendLive();
+    hint(fromPc ? 'Auto-add stopped from the PC.' : 'Auto-add stopped. Tap Add when ready.');
   }
 
   function nextStudent(closePc) {
     clearInterval(autoTimer); autoTimer = null;
     if (closePc && pcOnline) relay.send({ t: 'cancel' });
-    reset(); if (rec && listening) { try { rec.abort(); } catch (e) {} }
+    reset();
+    if (engine && engine.flush) engine.flush();
     $('#transcript').value = '';
-    renderAll();
+    renderAll(); sendLive();
   }
 
   // ---------- rendering ----------
@@ -783,11 +1170,16 @@ var QParse = (function () {
     });
   }
   function renderMic() { $('#mic').className = listening ? 'on' : ''; $('#mic').textContent = listening ? '■' : '🎙'; }
+  function renderLevel(level, speaking) {
+    var pct = Math.min(100, Math.round(Math.sqrt(level) * 260));
+    $('#meter i').style.width = pct + '%';
+    $('#meter').className = pct > 92 ? 'loud' : '';
+    $('#mic').style.boxShadow = listening && speaking ? '0 0 0 ' + Math.round(4 + pct / 7) + 'px rgba(229,72,77,.25)' : 'none';
+  }
   function renderTranscript() {
     var ta = $('#transcript');
     if (document.activeElement !== ta) { ta.value = committed + session; ta.scrollTop = ta.scrollHeight; }
   }
-  // Rebuild buttons only when the list itself changes, so taps never land on a node that was just replaced.
   function keyed(box, sig, build) {
     if (box.dataset.sig !== sig) { box.dataset.sig = sig; box.innerHTML = ''; build(); }
   }
@@ -809,7 +1201,7 @@ var QParse = (function () {
     seg.querySelectorAll('button').forEach(function (b) { b.classList.toggle('sel', b.dataset.id === String(form.queueId)); });
 
     var sv = $('#services'), list = queueServices();
-    var emptyMsg = !pc ? 'Waiting for the PC…' : form.queueId == null ? 'Pick a queue (or just let them say why they\'re here)' : '';
+    var emptyMsg = !pc ? 'Waiting for the PC…' : form.queueId == null ? 'Picks itself from what they say — or tap a queue' : '';
     keyed(sv, form.queueId + '|' + emptyMsg + '|' + JSON.stringify(list), function () {
       if (emptyMsg) { var h = document.createElement('span'); h.className = 'hint'; h.textContent = emptyMsg; sv.appendChild(h); }
       list.forEach(function (s) {
@@ -820,6 +1212,7 @@ var QParse = (function () {
       });
     });
     sv.querySelectorAll('.chip').forEach(function (c) { c.classList.toggle('sel', c.dataset.id === String(form.serviceId)); });
+
     var lk = lookupFor();
     setField('phone', QParse.formatPhone(form.phone));
     setField('name', form.name, lk && lk.name ? lk.name + ' (from Qless)' : 'Filled by Qless if they\'ve been here');
@@ -829,9 +1222,32 @@ var QParse = (function () {
     var L = $('#lookup');
     if (lk) {
       L.className = lk.known ? 'known' : 'new';
-      L.textContent = lk.known ? '↩︎ Returning: ' + (lk.name || 'name on file') + (lk.cwid ? ' · CWID ' + lk.cwid : ' · no CWID on file — ask for it') : '★ New number — get their name and CWID';
-    } else if (form.phone.length === 10 && pcOnline && settings.autoFill) { L.className = ''; L.textContent = 'Looking up ' + QParse.formatPhone(form.phone) + '…'; }
+      L.textContent = lk.known ? '↩︎ Returning: ' + (lk.name || 'name on file') + (lk.cwid ? ' · CWID ' + lk.cwid : ' · no CWID on file — ask for it') : form.name && form.cwid ? '★ New student — name + CWID captured' : '★ New number — get their name and CWID';
+    } else if (form.phone.length === 10 && pcOnline) { L.className = ''; L.textContent = 'Looking up ' + QParse.formatPhone(form.phone) + '…'; }
     else { L.className = ''; L.textContent = ''; }
+  }
+  function tipCards() {
+    if (!QKB.loaded()) return [];
+    var lk = lookupFor();
+    return QKB.match(committed + session, 2, { skip: form.cwid || (lk && lk.cwid) ? /cwid/ : null });
+  }
+  function renderTips() {
+    var box = $('#tips');
+    var cards = tipCards();
+    var sig = cards.map(function (c) { return c.id; }).join(',');
+    if (sig === lastTipSig) return;
+    lastTipSig = sig; box.innerHTML = '';
+    cards.forEach(function (c) {
+      var d = document.createElement('div'); d.className = 'tip';
+      var b = document.createElement('b'); b.textContent = (c.kind === 'staff' ? '👤 ' : '💡 ') + c.title; d.appendChild(b);
+      if (c.say) { var s = document.createElement('div'); s.className = 'say'; s.textContent = c.say; d.appendChild(s); }
+      if (c.facts.length) {
+        var ul = document.createElement('ul');
+        c.facts.slice(0, 4).forEach(function (f) { var li = document.createElement('li'); li.textContent = f; ul.appendChild(li); });
+        d.appendChild(ul);
+      }
+      box.appendChild(d);
+    });
   }
   function setField(k, v, ph) {
     var el = $('#f-' + k);
@@ -846,7 +1262,10 @@ var QParse = (function () {
     b.textContent = pendingAdd ? 'Adding…' : autoTimer ? 'Adding in ' + autoLeft + '… (tap to stop)' : 'Add to queue';
     if (autoTimer) b.disabled = false;
   }
-  function renderAll() { renderStatus(); renderQueues(); renderFields(); renderAdd(); renderTranscript(); }
+  function renderEngineInfo() {
+    $('#engineInfo').textContent = cfg.dgKey ? 'Deepgram key received from the PC.' : 'No Deepgram key yet — paste it in the PC panel (or here). Until then Apple speech is used.';
+  }
+  function renderAll() { renderStatus(); renderQueues(); renderFields(); renderAdd(); renderTranscript(); renderTips(); }
   var resultTimer;
   function showResult(ok, msg) {
     var r = $('#result'); r.hidden = false; r.className = ok ? 'ok' : 'bad'; r.textContent = msg;
@@ -860,9 +1279,8 @@ var QParse = (function () {
     b.onclick = function () {
       var f = b.dataset.field;
       if (focus && focus.field === f) { focus = null; renderFields(); hint(listening ? 'Listening…' : ''); return; }
-      if (rec && listening) { try { rec.abort(); } catch (e) {} } // fresh utterance for this field
-      commitSession();
-      focus = { field: f, from: (committed + session).length };
+      if (session.trim()) { committed += session.trim() + ' '; session = ''; }
+      focus = { field: f, from: committed.length };
       if (!listening) startListening();
       hint({ phone: 'Listening for the phone number…', name: 'Listening for their name (they can spell it)…', cwid: 'Listening for the CWID…', note: 'Listening for a note…' }[f]);
       renderFields();
@@ -880,14 +1298,24 @@ var QParse = (function () {
   });
   $('#transcript').addEventListener('input', function (e) { committed = e.target.value; session = ''; onTranscript(); });
   $('#add').onclick = function () {
-    if (autoTimer) { clearInterval(autoTimer); autoTimer = null; autoCancelled = true; renderAdd(); return; }
+    if (autoTimer) { cancelAuto(false); return; }
     if (canAdd()) sendAdd();
   };
   $('#next').onclick = function () { nextStudent(true); };
-  $('#settingsBtn').onclick = function () { $('#autoAdd').checked = settings.autoAdd; $('#autoFill').checked = settings.autoFill; $('#settings').showModal(); };
+  $('#settingsBtn').onclick = function () {
+    $('#autoAdd').checked = settings.autoAdd; $('#engine').value = settings.engine; $('#language').value = settings.language;
+    $('#boost').value = settings.boost; $('#boostVal').textContent = settings.boost + '×'; $('#skipSilence').checked = settings.skipSilence;
+    $('#dgKey').value = cfg.dgKey || ''; renderEngineInfo();
+    $('#settings').showModal();
+  };
   $('#closeSettings').onclick = function () { $('#settings').close(); };
-  $('#autoAdd').onchange = function (e) { settings.autoAdd = e.target.checked; store.set('autoAdd', settings.autoAdd); maybeAutoAdd(); };
-  $('#autoFill').onchange = function (e) { settings.autoFill = e.target.checked; store.set('autoFill', settings.autoFill); };
+  function setSetting(k, v, restart) { settings[k] = v; store.set(k, v); if (restart) restartEngine(); }
+  $('#autoAdd').onchange = function (e) { setSetting('autoAdd', e.target.checked); maybeAutoAdd(); };
+  $('#engine').onchange = function (e) { setSetting('engine', e.target.value, true); };
+  $('#language').onchange = function (e) { setSetting('language', e.target.value, true); };
+  $('#skipSilence').onchange = function (e) { setSetting('skipSilence', e.target.checked, true); };
+  $('#boost').oninput = function (e) { var v = Number(e.target.value); setSetting('boost', v); $('#boostVal').textContent = v + '×'; if (engine) engine.setBoost(v); };
+  $('#dgKey').onchange = function (e) { cfg.dgKey = e.target.value.trim(); store.set('cfg', cfg); restartEngine(); renderEngineInfo(); };
   $('#unpair').onclick = function () { store.set('pairing', null); relay.close(); location.hash = ''; location.reload(); };
 
   renderAll(); renderMic();
