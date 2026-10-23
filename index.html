@@ -200,7 +200,7 @@
   <label class="switch">Deepgram key <input type="password" id="dgKey" placeholder="set on the PC"></label>
   <label class="switch">Fall back to Apple speech if Deepgram drops <input type="checkbox" id="fallbackApple"></label>
   <p id="engineInfo"></p>
-  <p id="buildInfo" style="color:var(--muted);font-size:12px">Build Oct 23, 2:34 PM</p>
+  <p id="buildInfo" style="color:var(--muted);font-size:12px">Build Oct 23, 2:40 PM</p>
   <details style="margin:6px 0"><summary style="font-size:13px;color:var(--muted)">What just happened (for debugging)</summary>
     <pre id="diagLog" style="font-size:11px;line-height:1.35;white-space:pre-wrap;max-height:180px;overflow:auto;background:var(--field);padding:8px;border-radius:8px"></pre>
   </details>
@@ -1717,6 +1717,7 @@ var QKB = (function () {
       relay.kick(); relay.send({ t: 'hello' });
       if (listening) { acquireWakeLock(); restartEngine(); }
       logEv('page visible again');
+      checkForUpdate();
     } else if (listening && engine) {
       // iOS stops capture for a backgrounded tab regardless, so hand the mic back deliberately instead of leaving a
       // half-dead stream holding it (that is what made the orange dot linger and then reappear by itself).
@@ -1765,6 +1766,7 @@ var QKB = (function () {
       .catch(function () { hint('Could not unlock the knowledge base (re-pair from the PC).', true); });
   }
   if (cfg.kbKey) loadKb();
+  checkForUpdate();
 
   // ---------- speech ----------
   var engine = null, listening = false, wakeLock = null, usingEngine = null;
@@ -1774,6 +1776,25 @@ var QKB = (function () {
   }
   // Falling back to Apple speech used to be permanent and unexplained. Now it is time-boxed and has a reason.
   var dgBlockedUntil = 0, fallbackWhy = '', dgRetryTimer = null, lastDiag = null;
+  // GitHub Pages serves index.html with max-age=600, and a bookmarked page on iOS can sit on a cached copy for far
+  // longer than that — long enough to spend an afternoon debugging a version that is no longer deployed. Compare the
+  // stamp baked into this page against version.txt and jump to a fresh URL (a new query string defeats the cache).
+  var BUILD = 'Oct 23, 2:40 PM', lastUpdCheck = 0;
+  function checkForUpdate() {
+    if (!window.fetch || Date.now() - lastUpdCheck < 60000) return;
+    lastUpdCheck = Date.now();
+    fetch('version.txt?t=' + Date.now(), { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.text() : null; })
+      .then(function (v) {
+        if (!v || !(v = v.trim()) || v === BUILD) return;
+        var tried = '';
+        try { tried = sessionStorage.getItem('qfd.updateTo') || ''; } catch (e) {}
+        if (tried === v) { logEv('update ' + v + ' available but reload did not take'); hint('An update is ready — pull down to refresh.', true); return; }
+        try { sessionStorage.setItem('qfd.updateTo', v); } catch (e) {}
+        logEv('updating: ' + BUILD + ' -> ' + v);
+        location.replace(location.pathname + '?v=' + encodeURIComponent(v) + location.hash);
+      }).catch(function () {});
+  }
   // A short on-screen history, so a drop-out can be read off the phone instead of guessed at.
   var evLog = [];
   function logEv(s) {
