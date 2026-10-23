@@ -975,7 +975,14 @@ var QSpeech = (function () {
     // gen invalidates a start()/openMic() that is still mid-await when something stops or restarts us, so a late
     // getUserMedia can never leave a stream running that nobody reads (iOS shows that as a stuck orange dot).
     this.gen = 0; this.nodes = []; this.lastFrame = 0; this.tries = 0; this.recovering = false;
+    // Socket health. everOpened separates "the key/credit is wrong" (never connected) from "the network dropped"
+    // (was working) — the second must never cost you the engine, it is normal on cellular and through a VPN.
+    this.everOpened = false; this.drops = 0; this.lastClose = null;
+    this.backlog = []; this.backlogN = 0; this.maxBacklog = 8 * SR; // ~8 s of speech kept while reconnecting
   }
+  Deepgram.prototype.diag = function () {
+    return { drops: this.drops, lastClose: this.lastClose, micRebuilds: this.tries, connected: !!(this.ws && this.ws.readyState === 1), buffered: Math.round(this.backlogN / SR * 10) / 10 };
+  };
   Deepgram.prototype.url = function () { return 'wss://api.deepgram.com/v1/listen?' + streamParams(this.o).join('&'); };
   function constraints(vp) {
     // Normal: raw mic (iOS voice processing would suppress a student 1-2 m away).
@@ -1135,8 +1142,11 @@ var QSpeech = (function () {
       // keep the current source
     } finally { self.swapping = false; }
   };
+  // While the socket is down, hold the audio instead of throwing it away, so a blip does not swallow a sentence.
   Deepgram.prototype.send = function (pcm) {
-    if (this.ws && this.ws.readyState === 1) { this.ws.send(pcm.buffer); this.sent.append(pcm); this.lastSend = Date.now(); }
+    if (this.ws && this.ws.readyState === 1) { this.ws.send(pcm.buffer); this.sent.append(pcm); this.lastSend = Date.now(); return; }
+    this.backlog.push(pcm); this.backlogN += pcm.length;
+    while (this.backlogN > this.maxBacklog && this.backlog.length) this.backlogN -= this.backlog.shift().length;
   };
   Deepgram.prototype.connect = function () {
     var self = this;
@@ -1146,8 +1156,11 @@ var QSpeech = (function () {
     self.ws = ws; ws.binaryType = 'arraybuffer';
     var opened = false, epoch;
     ws.onopen = function () {
-      opened = true; self.fails = 0; self.lastSend = Date.now();
+      opened = true; self.everOpened = true; self.fails = 0; self.lastSend = Date.now();
       epoch = ++self.epoch; self.bases[epoch] = self.sent.total; // stream time 0 of this socket
+      // Anything captured while we were reconnecting goes first, so its stream time stays consistent.
+      var held = self.backlog; self.backlog = []; self.backlogN = 0;
+      held.forEach(function (p) { try { ws.send(p.buffer); self.sent.append(p); } catch (e) {} });
       self.o.onStatus('Listening (Deepgram)…');
       clearInterval(self.ka);
       self.ka = setInterval(function () {
@@ -1173,18 +1186,35 @@ var QSpeech = (function () {
         self.o.onText('', true, true, { words: [], start: m.last_word_end, duration: 0, lang: null, epoch: epoch, utteranceEnd: true });
       }
     };
-    ws.onclose = function () {
+    ws.onclose = function (ev) {
       clearInterval(self.ka);
+      self.lastClose = { code: ev && ev.code, reason: (ev && ev.reason) || '', at: Date.now(), hadOpened: opened };
+      if (opened) self.drops++;
+      self.o.onDiag && self.o.onDiag(self.diag());
       if (!self.running) return;
-      if (!opened) {
-        self.fails = (self.fails || 0) + 1;
+      self.fails = (self.fails || 0) + 1;
+      if (!self.everOpened) {
+        // Never connected since the mic was turned on: that is a key, credit or blocked-host problem, and Apple
+        // speech is the right answer quickly.
         if (self.fails >= 3) {
           self.o.onStatus('Deepgram would not connect — the key, the credit, or the network/VPN is blocking it. Using Apple speech.', true);
           self.o.onFatal && self.o.onFatal('Deepgram would not connect (key, credit or network/VPN)');
           return;
         }
+      } else if (self.fails >= 10) {
+        // It was working, so the key is fine and this is the network. Only after ~40 s of failing do we fall back to
+        // Apple as a stopgap — and the caller retries Deepgram on its own, so this is never the end of it.
+        self.o.onStatus('Deepgram keeps dropping (close ' + (self.lastClose.code || '?') + ') — using Apple speech for now.', true);
+        self.o.onFatal && self.o.onFatal('Deepgram kept dropping out (close ' + (self.lastClose.code || '?') + ')');
+        return;
+      } else if (self.fails > 1) {
+        self.o.onStatus('Reconnecting to Deepgram… (' + self.fails + ')');
       }
-      setTimeout(function () { self.connect(); }, Math.min(500 * (self.fails || 1), 3000));
+      // Exponential backoff: a mobile network that needs 3 s to come back used to burn the entire retry budget
+      // in 2 s and cost you the engine.
+      var delay = Math.min(400 * Math.pow(2, self.fails - 1), 10000);
+      clearTimeout(self.retry);
+      self.retry = setTimeout(function () { self.connect(); }, delay);
     };
     ws.onerror = function () {};
   };
@@ -1241,7 +1271,8 @@ var QSpeech = (function () {
   Deepgram.prototype.isNoisy = function () { return !!this.vp; };
   Deepgram.prototype.stop = function () {
     this.running = false; this.recovering = false;
-    clearInterval(this.ka); clearInterval(this.wd);
+    clearInterval(this.ka); clearInterval(this.wd); clearTimeout(this.retry);
+    this.backlog = []; this.backlogN = 0;
     try { if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify({ type: 'CloseStream' })); } catch (e) {}
     try { this.ws && this.ws.close(); } catch (e) {}
     this.closeMic();
@@ -1336,6 +1367,7 @@ var QSpeech = (function () {
   Apple.prototype.setAutoGain = function () {};
   Apple.prototype.getGain = function () { return 1; };
   Apple.prototype.isNoisy = function () { return false; };
+  Apple.prototype.diag = function () { return { drops: this.netFails || 0, lastClose: null, micRebuilds: this.fails || 0, connected: !!this.running, buffered: 0 }; };
   Apple.prototype.recheck = function () { return Promise.resolve(null); };
   Apple.prototype.checkNumber = function () { return Promise.resolve(null); };
   Apple.prototype.stop = function () {
@@ -1693,7 +1725,7 @@ var QKB = (function () {
     if (navigator.wakeLock && !wakeLock) navigator.wakeLock.request('screen').then(function (w) { wakeLock = w; w.addEventListener('release', function () { wakeLock = null; }); }).catch(function () {});
   }
   // Falling back to Apple speech used to be permanent and unexplained. Now it is time-boxed and has a reason.
-  var dgBlockedUntil = 0, fallbackWhy = '', dgRetryTimer = null;
+  var dgBlockedUntil = 0, fallbackWhy = '', dgRetryTimer = null, lastDiag = null;
   function wantedEngine() {
     if (settings.engine !== 'deepgram' || !cfg.dgKey) return 'apple';
     return Date.now() < dgBlockedUntil ? 'apple' : 'deepgram';
@@ -1715,6 +1747,7 @@ var QKB = (function () {
       onLevel: renderLevel,
       onLang: function (code) { curLang = code || curLang; var l = LANGS[code] || code; $('#lang').textContent = code && code !== 'en' ? '🌐 ' + l : ''; sendLive(code); },
       onStatus: function (msg, err) { hint(msg, err); },
+      onDiag: function (d) { lastDiag = d; renderEngineInfo(); },
       onFatal: function (why) {
         // Stop hammering a socket that is being refused, but come back to Deepgram on our own in 2 minutes —
         // a VPN hiccup or a dropped connection should not cost you accents and Spanish for the rest of the shift.
@@ -2140,8 +2173,18 @@ var QKB = (function () {
   }
   function renderEngineInfo() {
     var why = engineWhy();
-    $('#engineInfo').textContent = why ? 'Using Apple speech: ' + why
+    var txt = why ? 'Using Apple speech: ' + why
       : cfg.dgKey ? 'Deepgram key received from the PC.' : 'No Deepgram key yet — paste it in the PC panel (or here). Until then Apple speech is used.';
+    // Evidence instead of guesswork when something drops out: the close code says whether it was the network
+    // (1006 / 1001), Deepgram refusing us (4xxx / 1008) or a server error (1011).
+    var d = engine && engine.diag ? engine.diag() : lastDiag;
+    if (d) {
+      txt += ' · connection drops: ' + d.drops;
+      if (d.lastClose && d.lastClose.code) txt += ' (last close ' + d.lastClose.code + (d.lastClose.reason ? ': ' + d.lastClose.reason : '') + ')';
+      txt += ', mic rebuilds: ' + d.micRebuilds;
+      if (d.buffered) txt += ', holding ' + d.buffered + 's of audio';
+    }
+    $('#engineInfo').textContent = txt;
   }
   function renderAll() { renderStatus(); renderQueues(); renderFields(); renderAdd(); renderTranscript(); renderTips(); }
   var resultTimer;
