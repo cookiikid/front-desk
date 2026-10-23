@@ -198,7 +198,12 @@
   <label class="switch">Show the keypad when I ask for their number <input type="checkbox" id="kpAuto"></label>
   <label class="switch">Phone stands upside down (flip the keypad for the student) <input type="checkbox" id="kpFlip"></label>
   <label class="switch">Deepgram key <input type="password" id="dgKey" placeholder="set on the PC"></label>
+  <label class="switch">Fall back to Apple speech if Deepgram drops <input type="checkbox" id="fallbackApple"></label>
   <p id="engineInfo"></p>
+  <p id="buildInfo" style="color:var(--muted);font-size:12px">Build Oct 23, 2:25 PM</p>
+  <details style="margin:6px 0"><summary style="font-size:13px;color:var(--muted)">What just happened (for debugging)</summary>
+    <pre id="diagLog" style="font-size:11px;line-height:1.35;white-space:pre-wrap;max-height:180px;overflow:auto;background:var(--field);padding:8px;border-radius:8px"></pre>
+  </details>
   <h2 style="margin-top:14px">Placing the phone</h2>
   <ul>
     <li>Stand the phone up on the counter <b>on the student's side of the monitor</b> (or on top of it), bottom edge pointing at them. Every halving of the distance is like them speaking twice as loud.</li>
@@ -980,6 +985,7 @@ var QSpeech = (function () {
     this.everOpened = false; this.drops = 0; this.lastClose = null;
     this.backlog = []; this.backlogN = 0; this.maxBacklog = 8 * SR; // ~8 s of speech kept while reconnecting
   }
+  Deepgram.prototype.ev = function (s) { if (this.o.onEvent) this.o.onEvent(s); };
   Deepgram.prototype.diag = function () {
     return { drops: this.drops, lastClose: this.lastClose, micRebuilds: this.tries, connected: !!(this.ws && this.ws.readyState === 1), buffered: Math.round(this.backlogN / SR * 10) / 10 };
   };
@@ -1070,6 +1076,7 @@ var QSpeech = (function () {
     self.recovering = true;
     self.tries++;
     if (self.tries === 4) self.o.onStatus('The mic keeps dropping out — still retrying. Tap the mic twice to reset.', true);
+    self.ev('mic rebuild #' + self.tries + ': ' + why);
     self.o.onRecover && self.o.onRecover(why, self.tries);
     self.closeMic();
     setTimeout(function () {
@@ -1161,6 +1168,7 @@ var QSpeech = (function () {
       // Anything captured while we were reconnecting goes first, so its stream time stays consistent.
       var held = self.backlog; self.backlog = []; self.backlogN = 0;
       held.forEach(function (p) { try { ws.send(p.buffer); self.sent.append(p); } catch (e) {} });
+      self.ev('socket open' + (held.length ? ' (flushed ' + held.length + ' held frames)' : ''));
       self.o.onStatus('Listening (Deepgram)…');
       clearInterval(self.ka);
       self.ka = setInterval(function () {
@@ -1193,22 +1201,30 @@ var QSpeech = (function () {
       self.o.onDiag && self.o.onDiag(self.diag());
       if (!self.running) return;
       self.fails = (self.fails || 0) + 1;
-      if (!self.everOpened) {
-        // Never connected since the mic was turned on: that is a key, credit or blocked-host problem, and Apple
-        // speech is the right answer quickly.
-        if (self.fails >= 3) {
+      // Is the microphone itself still delivering audio? That separates "the mic died" from "the network died",
+      // which look identical from the outside and have completely different fixes.
+      var micOk = self.lastFrame && Date.now() - self.lastFrame < 1500;
+      var code = (self.lastClose && self.lastClose.code) || '?';
+      self.ev('socket close ' + code + (micOk ? ' (mic alive)' : ' (no mic audio)'));
+      if (!self.everOpened && self.fails >= 3) {
+        // Never connected since the mic was turned on: a key, credit or blocked-host problem.
+        if (self.o.noFallback) self.o.onStatus('Deepgram will not connect (key, credit or network/VPN) — still retrying.', true);
+        else {
           self.o.onStatus('Deepgram would not connect — the key, the credit, or the network/VPN is blocking it. Using Apple speech.', true);
           self.o.onFatal && self.o.onFatal('Deepgram would not connect (key, credit or network/VPN)');
           return;
         }
-      } else if (self.fails >= 10) {
-        // It was working, so the key is fine and this is the network. Only after ~40 s of failing do we fall back to
-        // Apple as a stopgap — and the caller retries Deepgram on its own, so this is never the end of it.
-        self.o.onStatus('Deepgram keeps dropping (close ' + (self.lastClose.code || '?') + ') — using Apple speech for now.', true);
-        self.o.onFatal && self.o.onFatal('Deepgram kept dropping out (close ' + (self.lastClose.code || '?') + ')');
-        return;
+      } else if (self.everOpened && self.fails >= 10) {
+        // It was working, so the key is fine and this is the network. Switching engines here would swap a working
+        // recogniser for Apple's, which needs Apple's servers and so fails the same way (or worse) behind a VPN.
+        if (self.o.noFallback) self.o.onStatus('Deepgram keeps dropping (close ' + code + ') — still retrying. Mic is ' + (micOk ? 'fine' : 'also down') + '.', true);
+        else {
+          self.o.onStatus('Deepgram keeps dropping (close ' + code + ') — using Apple speech for now.', true);
+          self.o.onFatal && self.o.onFatal('Deepgram kept dropping out (close ' + code + ')');
+          return;
+        }
       } else if (self.fails > 1) {
-        self.o.onStatus('Reconnecting to Deepgram… (' + self.fails + ')');
+        self.o.onStatus((micOk ? 'Mic is fine — reconnecting' : 'Reconnecting') + ' to Deepgram… (' + self.fails + ')');
       }
       // Exponential backoff: a mobile network that needs 3 s to come back used to burn the entire retry budget
       // in 2 s and cost you the engine.
@@ -1647,7 +1663,10 @@ var QKB = (function () {
   var settings = {
     autoAdd: store.get('autoAdd', true), engine: store.get('engine', 'deepgram'), language: store.get('language', 'multi'),
     boost: store.get('boost', 3), skipSilence: store.get('skipSilence', true), countdown: store.get('countdown', 1), noisy: store.get('noisy', false),
-    kpAuto: store.get('kpAuto', true), kpFlip: store.get('kpFlip', true), autoGain: store.get('autoGain', true)
+    kpAuto: store.get('kpAuto', true), kpFlip: store.get('kpFlip', true), autoGain: store.get('autoGain', true),
+    // Off by default: Apple speech needs Apple's servers, so behind a VPN it fails the same way Deepgram did —
+    // swapping engines mid-shift loses accents and Spanish and fixes nothing. Keep reconnecting instead.
+    fallbackApple: store.get('fallbackApple', false)
   };
   function reset() {
     form = { queueId: null, serviceId: null, phone: '', name: '', cwid: '', note: '', noteAuto: false };
@@ -1671,9 +1690,11 @@ var QKB = (function () {
     if (document.visibilityState === 'visible') {
       relay.kick(); relay.send({ t: 'hello' });
       if (listening) { acquireWakeLock(); restartEngine(); }
+      logEv('page visible again');
     } else if (listening && engine) {
       // iOS stops capture for a backgrounded tab regardless, so hand the mic back deliberately instead of leaving a
       // half-dead stream holding it (that is what made the orange dot linger and then reappear by itself).
+      logEv('page hidden — mic released');
       engine.stop(); engine = null; renderMic();
     }
   });
@@ -1689,6 +1710,7 @@ var QKB = (function () {
     cfg = { dgKey: m.dgKey || cfg.dgKey || '', kbKey: m.kbKey || cfg.kbKey || '', ignoreNames: m.ignoreNames || [], quick: m.quick || [] };
     store.set('cfg', cfg);
     if (QKB.setQuick) QKB.setQuick(cfg.quick);
+    logEv('config from PC: dgKey ' + (cfg.dgKey ? 'yes' : 'NO') + ', kbKey ' + (cfg.kbKey ? 'yes' : 'NO') + (changed ? ' (changed)' : ''));
     if (changed || !QKB.loaded()) loadKb();
     if (changed && listening) restartEngine();
     renderEngineInfo();
@@ -1726,6 +1748,15 @@ var QKB = (function () {
   }
   // Falling back to Apple speech used to be permanent and unexplained. Now it is time-boxed and has a reason.
   var dgBlockedUntil = 0, fallbackWhy = '', dgRetryTimer = null, lastDiag = null;
+  // A short on-screen history, so a drop-out can be read off the phone instead of guessed at.
+  var evLog = [];
+  function logEv(s) {
+    var d = new Date();
+    evLog.push(('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2) + '  ' + s);
+    if (evLog.length > 40) evLog.shift();
+    var box = document.getElementById('diagLog');
+    if (box) box.textContent = evLog.slice().reverse().join('\n');
+  }
   function wantedEngine() {
     if (settings.engine !== 'deepgram' || !cfg.dgKey) return 'apple';
     return Date.now() < dgBlockedUntil ? 'apple' : 'deepgram';
@@ -1748,6 +1779,8 @@ var QKB = (function () {
       onLang: function (code) { curLang = code || curLang; var l = LANGS[code] || code; $('#lang').textContent = code && code !== 'en' ? '🌐 ' + l : ''; sendLive(code); },
       onStatus: function (msg, err) { hint(msg, err); },
       onDiag: function (d) { lastDiag = d; renderEngineInfo(); },
+      onEvent: logEv,
+      noFallback: !settings.fallbackApple,
       onFatal: function (why) {
         // Stop hammering a socket that is being refused, but come back to Deepgram on our own in 2 minutes —
         // a VPN hiccup or a dropped connection should not cost you accents and Spanish for the rest of the shift.
@@ -1764,6 +1797,7 @@ var QKB = (function () {
   }
   function startEngine(kind, attempt) {
     if (engine) engine.stop();
+    logEv('engine start: ' + kind + (attempt ? ' (retry ' + attempt + ')' : ''));
     usingEngine = kind;
     engine = makeEngine(kind);
     var mine = engine;
@@ -2226,7 +2260,8 @@ var QKB = (function () {
   $('#settingsBtn').onclick = function () {
     $('#autoAdd').checked = settings.autoAdd; $('#countdown').value = String(settings.countdown); $('#engine').value = settings.engine; $('#language').value = settings.language;
     $('#boost').value = settings.boost; $('#boostVal').textContent = settings.autoGain ? 'auto' : settings.boost + '×'; $('#skipSilence').checked = settings.skipSilence;
-    $('#autoGain').checked = settings.autoGain;
+    $('#autoGain').checked = settings.autoGain; $('#fallbackApple').checked = settings.fallbackApple;
+    logEv('settings opened'); renderEngineInfo();
     $('#dgKey').value = cfg.dgKey || ''; $('#noisy').checked = settings.noisy; $('#kpAuto').checked = settings.kpAuto; $('#kpFlip').checked = settings.kpFlip; renderEngineInfo();
     $('#settings').showModal();
   };
@@ -2237,6 +2272,7 @@ var QKB = (function () {
   $('#countdown').onchange = function (e) { setSetting('countdown', Number(e.target.value)); };
   $('#language').onchange = function (e) { setSetting('language', e.target.value, true); };
   $('#skipSilence').onchange = function (e) { setSetting('skipSilence', e.target.checked, true); };
+  $('#fallbackApple').onchange = function (e) { setSetting('fallbackApple', e.target.checked, true); };
   $('#noisy').onchange = function (e) { setSetting('noisy', e.target.checked, true); };
   $('#kpAuto').onchange = function (e) { setSetting('kpAuto', e.target.checked); };
   $('#kpFlip').onchange = function (e) { setSetting('kpFlip', e.target.checked); };
