@@ -200,7 +200,7 @@
   <label class="switch">Deepgram key <input type="password" id="dgKey" placeholder="set on the PC"></label>
   <label class="switch">Fall back to Apple speech if Deepgram drops <input type="checkbox" id="fallbackApple"></label>
   <p id="engineInfo"></p>
-  <p id="buildInfo" style="color:var(--muted);font-size:12px">Build Oct 23, 2:40 PM</p>
+  <p id="buildInfo" style="color:var(--muted);font-size:12px">Build Oct 23, 2:52 PM</p>
   <details style="margin:6px 0"><summary style="font-size:13px;color:var(--muted)">What just happened (for debugging)</summary>
     <pre id="diagLog" style="font-size:11px;line-height:1.35;white-space:pre-wrap;max-height:180px;overflow:auto;background:var(--field);padding:8px;border-radius:8px"></pre>
   </details>
@@ -829,13 +829,38 @@ var QSpeech = (function () {
     (o.keyterms || []).forEach(function (k) { p.push('keyterm=' + encodeURIComponent(k)); });
     return p;
   }
+  // Deepgram's streaming endpoint silently refuses a handshake whose URL is too long: measured 2026-10-23 with
+  // test/ws-keyterms.test.js, 1505 chars connects and 1554 does not, and it is the length that matters, not the
+  // number of terms (71 short terms connect; 20 long ones do not). It simply never answers, so the browser reports
+  // close 1006 with no reason -- indistinguishable from a network failure, and it costs the whole engine.
+  // Keyterms only nudge spelling; a connection is everything. So budget the URL and drop the overflow.
+  var WS_BASE = 'wss://api.deepgram.com/v1/listen?';
+  var MAX_URL = 1200; // comfortably under the measured limit, leaving room for longer languages/params
+  function streamUrl(o) {
+    o = o || {};
+    var base = WS_BASE + streamParams(Object.assign({}, o, { keyterms: [] })).join('&');
+    var kt = o.keyterms || [], parts = [], len = base.length;
+    for (var i = 0; i < kt.length; i++) {
+      var piece = '&keyterm=' + encodeURIComponent(kt[i]);
+      if (len + piece.length > MAX_URL) break;
+      parts.push(piece); len += piece.length;
+    }
+    return { url: base + parts.join(''), used: parts.length, total: kt.length };
+  }
   // Second listen on a short span (pre-recorded API): whole-file context makes digits much more reliable.
   function recheckParams(o) {
     o = o || {};
     var p = ['model=' + (o.model || 'nova-3'), 'language=' + (o.language || 'en'), 'smart_format=true', 'numerals=true', 'punctuate=true', 'mip_opt_out=true'];
     var kt = [].concat(o.keyterms || []);
     if (o.prompt) kt = kt.concat(Array.isArray(o.prompt) ? o.prompt : String(o.prompt).split(/\s*[,;\n]\s*/));
-    kt.filter(Boolean).slice(0, 50).forEach(function (k) { p.push('keyterm=' + encodeURIComponent(k)); });
+    // Same URL budget as the stream: this endpoint is a POST, but it is the same host behind the same edge, and a
+    // silently refused second listen would quietly cost accuracy on exactly the digits it exists to double-check.
+    var len = 'https://api.deepgram.com/v1/listen?'.length + p.join('&').length;
+    kt.filter(Boolean).slice(0, 50).forEach(function (k) {
+      var piece = 'keyterm=' + encodeURIComponent(k);
+      if (len + 1 + piece.length > MAX_URL) return;
+      p.push(piece); len += 1 + piece.length;
+    });
     (o.extra || []).forEach(function (x) { p.push(x); });
     return p;
   }
@@ -1014,7 +1039,14 @@ var QSpeech = (function () {
   Deepgram.prototype.diag = function () {
     return { drops: this.drops, lastClose: this.lastClose, micRebuilds: this.tries, connected: !!(this.ws && this.ws.readyState === 1), buffered: Math.round(this.backlogN / SR * 10) / 10 };
   };
-  Deepgram.prototype.url = function () { return 'wss://api.deepgram.com/v1/listen?' + streamParams(this.o).join('&'); };
+  Deepgram.prototype.url = function () {
+    var r = streamUrl(this.o);
+    if (r.total > r.used && !this.warnedKt) {
+      this.warnedKt = true;
+      this.ev('keyterms trimmed to ' + r.used + ' of ' + r.total + ' so the handshake URL stays under ' + MAX_URL + ' chars');
+    }
+    return r.url;
+  };
   function constraints(vp) {
     // Normal: raw mic (iOS voice processing would suppress a student 1-2 m away).
     // Voice processing (noisy-room mode): iOS cancels background noise + its own AGC.
@@ -1430,6 +1462,8 @@ var QSpeech = (function () {
     // internals shared with test/speech/eval.js
     _dsp: { FrontEnd: FrontEnd, Gate: Gate, SentBuffer: SentBuffer, wav: wav, SR: SR },
     _streamParams: streamParams,
+    _streamUrl: streamUrl,
+    _maxUrl: MAX_URL,
     _recheckParams: recheckParams,
     _recheckRequest: recheckRequest
   };
@@ -1779,7 +1813,7 @@ var QKB = (function () {
   // GitHub Pages serves index.html with max-age=600, and a bookmarked page on iOS can sit on a cached copy for far
   // longer than that — long enough to spend an afternoon debugging a version that is no longer deployed. Compare the
   // stamp baked into this page against version.txt and jump to a fresh URL (a new query string defeats the cache).
-  var BUILD = 'Oct 23, 2:40 PM', lastUpdCheck = 0;
+  var BUILD = 'Oct 23, 2:52 PM', lastUpdCheck = 0;
   function checkForUpdate() {
     if (!window.fetch || Date.now() - lastUpdCheck < 60000) return;
     lastUpdCheck = Date.now();
