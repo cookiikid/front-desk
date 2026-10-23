@@ -704,6 +704,11 @@ var QSpeech = (function () {
     this.gDb = clamp(dB(o.boost || o.gain || 3), this.minDb, this.maxDb);
     this.manualDb = dB(o.boost || o.gain || 3);
     this.ceil = Math.pow(10, -1 / 20);
+    // Voice activity: above the noise floor by vadDb, OR plainly loud enough on its own (absDb). A student 1-2 m away
+    // behind the monitor can sit only a few dB over lobby babble, so this has to be generous — a missed "speaking"
+    // means the gate below never opens and Deepgram hears nothing at all.
+    this.vadDb = o.vadDb != null ? o.vadDb : 3.5;
+    this.absDb = o.absDb != null ? o.absDb : -50;
     this.noiseDb = null; this.hist = []; this.histMax = 80; // 80 x 50 ms = 4 s
     this.speechP = null; this.speechDb = null;
     // high-pass biquad (RBJ, Butterworth)
@@ -733,7 +738,9 @@ var QSpeech = (function () {
     var sorted = this.hist.slice().sort(function (p, q) { return p - q; });
     var pct = sorted[Math.floor(sorted.length * 0.15)];
     this.noiseDb = this.noiseDb == null ? pct : this.noiseDb + (pct - this.noiseDb) * Math.min(1, dt / 0.5);
-    var speaking = inDb > this.noiseDb + 6 && inDb > -80;
+    // Until ~1 s of history exists the floor estimate is junk, so err on the side of sending audio.
+    var warm = this.hist.length >= 20;
+    var speaking = warm ? (inDb > this.noiseDb + this.vadDb || inDb > this.absDb) && inDb > -80 : inDb > -72;
     var confident = inDb > this.noiseDb + 10 && inDb > -75;
     var transient = pk / Math.max(rms, 1e-9) > 9 || (this.speechDb != null && inDb > this.speechDb + 12);
     if (confident && !transient) {
@@ -769,8 +776,9 @@ var QSpeech = (function () {
     };
   };
 
-  // Silence skipping: send while speaking + 1.5 s hangover, with 400 ms of pre-roll so first syllables survive.
-  function Gate(skip, hangFrames, preFrames) { this.skip = !!skip; this.hangN = hangFrames || 30; this.preN = preFrames || 8; this.hang = 0; this.pre = []; }
+  // Silence skipping: send while speaking + 2 s hangover, with 600 ms of pre-roll so first syllables survive.
+  // (Both were raised after quiet/distant students lost their opening words and trailing digits.)
+  function Gate(skip, hangFrames, preFrames) { this.skip = !!skip; this.hangN = hangFrames || 40; this.preN = preFrames || 12; this.hang = 0; this.pre = []; }
   Gate.prototype.push = function (pcm, speaking) {
     if (speaking) this.hang = this.hangN; else if (this.hang > 0) this.hang--;
     if (!this.skip || this.hang > 0) { var outF = this.pre.concat([pcm]); this.pre = []; return outF; }
@@ -964,6 +972,9 @@ var QSpeech = (function () {
     this.sent = new SentBuffer(60);
     this.vp = !!o.noisy; this.noisyOn = o.noisyOnDb != null ? o.noisyOnDb : -30; this.noisyOff = o.noisyOffDb != null ? o.noisyOffDb : -40;
     this.loudFor = 0; this.quietFor = 0; this.vpOffset = 0;
+    // gen invalidates a start()/openMic() that is still mid-await when something stops or restarts us, so a late
+    // getUserMedia can never leave a stream running that nobody reads (iOS shows that as a stuck orange dot).
+    this.gen = 0; this.nodes = []; this.lastFrame = 0; this.tries = 0; this.recovering = false;
   }
   Deepgram.prototype.url = function () { return 'wss://api.deepgram.com/v1/listen?' + streamParams(this.o).join('&'); };
   function constraints(vp) {
@@ -976,29 +987,105 @@ var QSpeech = (function () {
     var self = this;
     if (self.running) return;
     self.running = true;
+    self.gate = new Gate(self.o.skipSilence);
+    self.tries = 0;
+    await self.openMic();
+    self.connect();
+    self.startWatchdog();
+  };
+  // Build (or rebuild) mic -> 16 kHz frames. Safe to call again after an interruption: the Deepgram socket and the
+  // sent-audio buffer are left alone, so recheck() timestamps stay valid across a mic drop-out.
+  Deepgram.prototype.openMic = async function () {
+    var self = this, gen = ++self.gen, stream = null, ctx = null;
+    function stale() { return !self.running || gen !== self.gen; }
+    function bail() {
+      if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
+      if (ctx) try { ctx.close(); } catch (e) {}
+    }
     try {
-      self.stream = await navigator.mediaDevices.getUserMedia(constraints(self.vp));
+      stream = await navigator.mediaDevices.getUserMedia(constraints(self.vp));
     } catch (e) {
+      if (stale()) return;
       self.running = false;
       self.o.onStatus('Microphone blocked — allow it for this site in Safari settings (aA → Website Settings → Microphone).', true);
       throw e;
     }
-    var ctx = self.ctx = new (window.AudioContext || window.webkitAudioContext)();
-    if (ctx.state === 'suspended') await ctx.resume();
-    var url = URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' }));
-    await ctx.audioWorklet.addModule(url);
-    self.src = ctx.createMediaStreamSource(self.stream);
+    if (stale()) return bail();
+    try {
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      if (ctx.state === 'suspended') await ctx.resume();
+      if (!self.workletUrl) self.workletUrl = URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' }));
+      await ctx.audioWorklet.addModule(self.workletUrl);
+    } catch (e) {
+      bail();
+      if (!stale()) self.o.onStatus('Could not start the microphone — tap the mic button again.', true);
+      return;
+    }
+    if (stale()) return bail();
+    self.stream = stream; self.ctx = ctx;
+    self.src = ctx.createMediaStreamSource(stream);
     var lp = self.lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 7200; lp.Q.value = 0.707; // anti-alias for 16 kHz
     var node = new AudioWorkletNode(ctx, 'down16k');
     var mute = ctx.createGain(); mute.gain.value = 0;
     self.src.connect(lp); lp.connect(node); node.connect(mute); mute.connect(ctx.destination);
     self.nodes = [lp, node, mute];
-    self.gate = new Gate(self.o.skipSilence);
-    node.port.onmessage = function (ev) { self.onFrame(new Float32Array(ev.data)); };
-    self.connect();
+    node.port.onmessage = function (ev) { if (gen === self.gen) self.onFrame(new Float32Array(ev.data)); };
+    self.lastFrame = Date.now();
+    self.watchMic(stream, ctx, gen);
+  };
+  // iOS takes the mic away for calls, Siri, the Camera app and screen lock; it also suspends an AudioContext that was
+  // backgrounded. Both are recoverable, but only if we notice — a muted track keeps delivering silent frames forever.
+  Deepgram.prototype.watchMic = function (stream, ctx, gen) {
+    var self = this, t = stream.getAudioTracks()[0];
+    if (t) {
+      t.onmute = function () { if (gen === self.gen) { self.o.onStatus('Mic interrupted — reconnecting…'); self.recover('track muted'); } };
+      t.onended = function () { if (gen === self.gen) self.recover('track ended'); };
+    }
+    ctx.onstatechange = function () {
+      if (gen !== self.gen || !self.running) return;
+      if (ctx.state === 'closed') self.recover('context closed');
+      else if (ctx.state === 'suspended') ctx.resume().catch(function () { self.recover('context suspended'); });
+    };
+  };
+  // Catch-all: if frames stop arriving for any reason we did not anticipate, rebuild the mic path.
+  Deepgram.prototype.startWatchdog = function () {
+    var self = this;
+    clearInterval(self.wd);
+    self.wd = setInterval(function () {
+      if (!self.running || self.recovering || !self.lastFrame) return;
+      var quiet = Date.now() - self.lastFrame;
+      if (quiet > 1800) self.recover('no audio for ' + (quiet / 1000).toFixed(1) + 's');
+    }, 700);
+  };
+  Deepgram.prototype.recover = function (why) {
+    var self = this;
+    if (!self.running || self.recovering) return;
+    self.recovering = true;
+    self.tries++;
+    if (self.tries === 4) self.o.onStatus('The mic keeps dropping out — still retrying. Tap the mic twice to reset.', true);
+    self.o.onRecover && self.o.onRecover(why, self.tries);
+    self.closeMic();
+    setTimeout(function () {
+      if (!self.running) { self.recovering = false; return; }
+      self.openMic().then(function () { self.recovering = false; }, function () { self.recovering = false; });
+    }, Math.min(250 * self.tries, 2000));
+  };
+  // Tear down the audio graph only; the socket keeps running so a short drop-out does not lose the utterance.
+  Deepgram.prototype.closeMic = function () {
+    var self = this;
+    self.gen++; // anything still starting up is now stale
+    try { self.src && self.src.disconnect(); } catch (e) {}
+    (self.nodes || []).forEach(function (n) { try { n.disconnect(); } catch (e) {} });
+    self.nodes = [];
+    if (self.stream) self.stream.getTracks().forEach(function (t) { t.onmute = t.onended = null; t.stop(); });
+    if (self.ctx) { self.ctx.onstatechange = null; try { self.ctx.close(); } catch (e) {} }
+    self.stream = self.ctx = self.src = self.lp = null;
+    self.lastFrame = 0;
   };
   Deepgram.prototype.onFrame = function (f) {
     var self = this, r = self.fe.process(f);
+    self.lastFrame = Date.now();
+    if (self.tries) { self.tries = 0; self.o.onStatus('Listening (Deepgram)…'); }
     self.o.onLevel && self.o.onLevel(r.level, r.speaking, { gain: r.gain, noiseDb: Math.round(r.noiseDb), clipping: r.clipping, speechDb: r.speechDb == null ? null : Math.round(r.speechDb) });
     self.watchNoise(r, f.length / SR);
     self.gate.push(r.pcm, r.speaking).forEach(function (pcm) { self.send(pcm); });
@@ -1029,14 +1116,17 @@ var QSpeech = (function () {
     var self = this;
     if (!self.running || self.swapping || !self.ctx) return;
     self.swapping = true;
+    var gen = self.gen;
     try {
       var ns = await navigator.mediaDevices.getUserMedia(constraints(on));
-      if (!self.running || !self.ctx) { ns.getTracks().forEach(function (t) { t.stop(); }); return; }
+      // A mic recovery may have rebuilt the graph underneath us while getUserMedia was in flight.
+      if (!self.running || !self.ctx || gen !== self.gen) { ns.getTracks().forEach(function (t) { t.stop(); }); return; }
       var src = self.ctx.createMediaStreamSource(ns);
       src.connect(self.lp);
       try { self.src.disconnect(); } catch (e) {}
-      if (self.stream) self.stream.getTracks().forEach(function (t) { t.stop(); });
+      if (self.stream) self.stream.getTracks().forEach(function (t) { t.onmute = t.onended = null; t.stop(); });
       self.src = src; self.stream = ns; self.vp = on;
+      self.watchMic(ns, self.ctx, gen);
       self.loudFor = self.quietFor = 0;
       self.noiseAtSwap = noiseDb; self.vpSince = on ? 0 : null; self.vpOffset = on ? null : 0;
       self.fe.hist = []; // re-learn the floor for the new source
@@ -1150,14 +1240,13 @@ var QSpeech = (function () {
   Deepgram.prototype.getGain = function () { return this.fe.gain(); };
   Deepgram.prototype.isNoisy = function () { return !!this.vp; };
   Deepgram.prototype.stop = function () {
-    this.running = false; clearInterval(this.ka);
+    this.running = false; this.recovering = false;
+    clearInterval(this.ka); clearInterval(this.wd);
     try { if (this.ws && this.ws.readyState === 1) this.ws.send(JSON.stringify({ type: 'CloseStream' })); } catch (e) {}
     try { this.ws && this.ws.close(); } catch (e) {}
-    try { this.src && this.src.disconnect(); } catch (e) {}
-    (this.nodes || []).forEach(function (n) { try { n.disconnect(); } catch (e) {} });
-    if (this.stream) this.stream.getTracks().forEach(function (t) { t.stop(); });
-    if (this.ctx) this.ctx.close().catch(function () {});
-    this.ws = this.stream = this.ctx = this.src = null;
+    this.closeMic();
+    if (this.workletUrl) { try { URL.revokeObjectURL(this.workletUrl); } catch (e) {} this.workletUrl = null; }
+    this.ws = null;
   };
   // Throw away the in-flight utterance (new student / field mic).
   Deepgram.prototype.flush = function () {};
@@ -1494,6 +1583,10 @@ var QKB = (function () {
     if (document.visibilityState === 'visible') {
       relay.kick(); relay.send({ t: 'hello' });
       if (listening) { acquireWakeLock(); restartEngine(); }
+    } else if (listening && engine) {
+      // iOS stops capture for a backgrounded tab regardless, so hand the mic back deliberately instead of leaving a
+      // half-dead stream holding it (that is what made the orange dot linger and then reappear by itself).
+      engine.stop(); engine = null; renderMic();
     }
   });
 
@@ -1557,11 +1650,18 @@ var QKB = (function () {
       onFatal: function () { usingEngine = 'apple'; startEngine('apple'); }
     });
   }
-  function startEngine(kind) {
+  function startEngine(kind, attempt) {
     if (engine) engine.stop();
     usingEngine = kind;
     engine = makeEngine(kind);
-    engine.start().catch(function () { listening = false; renderMic(); });
+    var mine = engine;
+    // Coming back from the background, the first getUserMedia often fails while iOS is still releasing the mic —
+    // retry twice before giving up, instead of silently dropping out of listening.
+    engine.start().catch(function () {
+      if (engine !== mine || !listening) return;
+      if ((attempt || 0) < 2) setTimeout(function () { if (listening && engine === mine) startEngine(kind, (attempt || 0) + 1); }, 400 * ((attempt || 0) + 1));
+      else { listening = false; renderMic(); }
+    });
   }
   function restartEngine() { if (listening) startEngine(wantedEngine()); }
   function startListening() {
