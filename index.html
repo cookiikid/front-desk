@@ -1179,8 +1179,8 @@ var QSpeech = (function () {
       if (!opened) {
         self.fails = (self.fails || 0) + 1;
         if (self.fails >= 3) {
-          self.o.onStatus('Deepgram refused the connection (check the API key / credit). Switching to Apple speech.', true);
-          self.o.onFatal && self.o.onFatal();
+          self.o.onStatus('Deepgram would not connect — the key, the credit, or the network/VPN is blocking it. Using Apple speech.', true);
+          self.o.onFatal && self.o.onFatal('Deepgram would not connect (key, credit or network/VPN)');
           return;
         }
       }
@@ -1252,7 +1252,10 @@ var QSpeech = (function () {
   Deepgram.prototype.flush = function () {};
 
   // ---------------- Apple (Safari) ----------------
-  function Apple(o) { this.o = o; this.running = false; }
+  // iOS webkitSpeechRecognition is fragile and fails quietly: it ends after every utterance, start() throws if called
+  // before it is ready, it needs Apple's own servers (a VPN, hotspot or captive network kills it with 'network'), and
+  // it can simply stop delivering results without firing end or error. Each of those used to end listening silently.
+  function Apple(o) { this.o = o; this.running = false; this.fails = 0; this.netFails = 0; this.lastEvent = 0; this.discard = false; this.session = ''; }
   Apple.supported = function () { return !!(typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition)); };
   Apple.prototype.start = function () {
     var self = this, SR2 = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1261,27 +1264,73 @@ var QSpeech = (function () {
     var r = self.rec = new SR2();
     r.lang = self.o.appleLang || 'en-US'; r.interimResults = true; r.maxAlternatives = 1;
     r.continuous = !isIOS; // iOS repeats phrases in continuous mode; restart per utterance instead
-    var session = '';
+    self.isIOS = isIOS;
+    self.session = '';
+    var mark = function () { self.lastEvent = Date.now(); };
+    r.onstart = function () {
+      mark();
+      if (self.fails || self.netFails) { self.fails = self.netFails = 0; self.o.onStatus('Listening (Apple speech)…'); }
+    };
+    r.onaudiostart = mark;
+    r.onspeechstart = mark;
     r.onresult = function (e) {
+      mark(); self.fails = self.netFails = 0;
       var t = '';
       for (var i = 0; i < e.results.length; i++) t += e.results[i][0].transcript + ' ';
-      session = t; self.o.onText(t, false, false);
+      self.session = t; self.o.onText(t, false, false);
     };
     r.onerror = function (e) {
-      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+      mark();
+      var err = e && e.error;
+      if (err === 'not-allowed' || err === 'service-not-allowed') {
         self.running = false;
         self.o.onStatus('Mic or speech is blocked. Allow the microphone for this site and turn on Dictation (Settings → General → Keyboard).', true);
+      } else if (err === 'network') {
+        // Apple speech is server-based, unlike Deepgram which only needs one outbound WebSocket.
+        self.netFails++;
+        if (self.netFails >= 2) self.o.onStatus('Apple speech cannot reach Apple’s servers — turn the VPN off, or get the Deepgram key onto the phone.', true);
       }
+      // 'no-speech' and 'aborted' are normal on iOS; onend restarts us.
     };
     r.onend = function () {
-      if (session.trim()) self.o.onText(session, true, true);
-      session = '';
-      if (self.running) setTimeout(function () { try { r.start(); } catch (err) { self.running = false; self.o.onStatus('Tap the mic to keep listening.', true); } }, isIOS ? 120 : 30);
+      mark();
+      if (!self.discard && self.session.trim()) self.o.onText(self.session, true, true);
+      self.discard = false; self.session = '';
+      if (self.running) self.kick(isIOS ? 120 : 30);
     };
-    self.running = true;
-    try { r.start(); } catch (e) {}
+    self.running = true; self.discard = false; self.fails = self.netFails = 0; mark();
+    self.kick(0);
     self.o.onStatus('Listening (Apple speech)…');
+    self.startWatchdog();
     return Promise.resolve();
+  };
+  // Restart recognition, surviving the InvalidStateError iOS throws when it is not ready yet. A throw used to end
+  // the whole session; now it backs off and keeps trying, so one bad restart cannot strand you with a dead mic.
+  Apple.prototype.kick = function (delay) {
+    var self = this;
+    clearTimeout(self.timer);
+    self.timer = setTimeout(function () {
+      if (!self.running || !self.rec) return;
+      try { self.rec.start(); self.lastEvent = Date.now(); }
+      catch (e) {
+        var msg = String((e && e.name) + ' ' + (e && e.message));
+        if (/already started|InvalidStateError/i.test(msg)) { self.lastEvent = Date.now(); return; } // harmless
+        self.fails++;
+        if (self.fails === 5) self.o.onStatus('Apple speech keeps refusing to start — still retrying.', true);
+        self.kick(Math.min(300 * self.fails, 3000));
+      }
+    }, delay || 0);
+  };
+  // iOS sometimes stops delivering results without firing end or error: force a fresh recogniser.
+  Apple.prototype.startWatchdog = function () {
+    var self = this;
+    clearInterval(self.wd);
+    self.wd = setInterval(function () {
+      if (!self.running || !self.lastEvent || Date.now() - self.lastEvent < 9000) return;
+      self.lastEvent = Date.now();
+      try { self.rec && self.rec.abort(); } catch (e) {} // onend -> kick()
+      self.kick(200);
+    }, 2000);
   };
   Apple.prototype.setBoost = function () {};
   Apple.prototype.setAutoGain = function () {};
@@ -1289,8 +1338,15 @@ var QSpeech = (function () {
   Apple.prototype.isNoisy = function () { return false; };
   Apple.prototype.recheck = function () { return Promise.resolve(null); };
   Apple.prototype.checkNumber = function () { return Promise.resolve(null); };
-  Apple.prototype.stop = function () { this.running = false; try { this.rec && this.rec.abort(); } catch (e) {} };
-  Apple.prototype.flush = function () { try { this.rec && this.rec.abort(); } catch (e) {} };
+  Apple.prototype.stop = function () {
+    this.running = false;
+    clearInterval(this.wd); clearTimeout(this.timer);
+    this.session = '';
+    try { this.rec && this.rec.abort(); } catch (e) {}
+  };
+  // Throw away the in-flight utterance (new student / field mic). abort() fires onend, which would otherwise
+  // commit it — that leaked the previous student's words into the next one's form.
+  Apple.prototype.flush = function () { this.discard = true; this.session = ''; try { this.rec && this.rec.abort(); } catch (e) {} };
 
   return {
     create: function (engine, o) { return engine === 'deepgram' ? new Deepgram(o) : new Apple(o); },
@@ -1636,7 +1692,19 @@ var QKB = (function () {
   function acquireWakeLock() {
     if (navigator.wakeLock && !wakeLock) navigator.wakeLock.request('screen').then(function (w) { wakeLock = w; w.addEventListener('release', function () { wakeLock = null; }); }).catch(function () {});
   }
-  function wantedEngine() { return settings.engine === 'deepgram' && cfg.dgKey ? 'deepgram' : 'apple'; }
+  // Falling back to Apple speech used to be permanent and unexplained. Now it is time-boxed and has a reason.
+  var dgBlockedUntil = 0, fallbackWhy = '', dgRetryTimer = null;
+  function wantedEngine() {
+    if (settings.engine !== 'deepgram' || !cfg.dgKey) return 'apple';
+    return Date.now() < dgBlockedUntil ? 'apple' : 'deepgram';
+  }
+  function engineWhy() {
+    if (usingEngine !== 'apple') return '';
+    if (settings.engine !== 'deepgram') return 'Apple speech is selected in ⚙︎.';
+    if (!cfg.dgKey) return 'No Deepgram key on the phone yet — open Qless on the PC this phone is paired to.';
+    if (Date.now() < dgBlockedUntil) return fallbackWhy + '. Retrying Deepgram in ' + Math.ceil((dgBlockedUntil - Date.now()) / 1000) + 's.';
+    return '';
+  }
   function makeEngine(kind) {
     return QSpeech.create(kind, {
       key: cfg.dgKey, language: settings.language, boost: settings.boost, autoGain: settings.autoGain, skipSilence: settings.skipSilence, noisy: settings.noisy,
@@ -1647,7 +1715,18 @@ var QKB = (function () {
       onLevel: renderLevel,
       onLang: function (code) { curLang = code || curLang; var l = LANGS[code] || code; $('#lang').textContent = code && code !== 'en' ? '🌐 ' + l : ''; sendLive(code); },
       onStatus: function (msg, err) { hint(msg, err); },
-      onFatal: function () { usingEngine = 'apple'; startEngine('apple'); }
+      onFatal: function (why) {
+        // Stop hammering a socket that is being refused, but come back to Deepgram on our own in 2 minutes —
+        // a VPN hiccup or a dropped connection should not cost you accents and Spanish for the rest of the shift.
+        fallbackWhy = why || 'Deepgram would not connect';
+        dgBlockedUntil = Date.now() + 120000;
+        usingEngine = 'apple'; startEngine('apple');
+        renderEngineInfo();
+        clearTimeout(dgRetryTimer);
+        dgRetryTimer = setTimeout(function () {
+          if (listening && usingEngine === 'apple' && cfg.dgKey && settings.engine === 'deepgram') restartEngine();
+        }, 121000);
+      }
     });
   }
   function startEngine(kind, attempt) {
@@ -1667,7 +1746,8 @@ var QKB = (function () {
   function startListening() {
     listening = true; renderMic(); acquireWakeLock();
     startEngine(wantedEngine());
-    if (!cfg.dgKey && settings.engine === 'deepgram') hint('Using Apple speech — add a Deepgram key on the PC for accents and other languages.');
+    var why = engineWhy();
+    if (why) hint('Apple speech — ' + why, true);
   }
   function stopListening() {
     listening = false; focus = null;
@@ -2059,7 +2139,9 @@ var QKB = (function () {
     if (autoTimer) b.disabled = false;
   }
   function renderEngineInfo() {
-    $('#engineInfo').textContent = cfg.dgKey ? 'Deepgram key received from the PC.' : 'No Deepgram key yet — paste it in the PC panel (or here). Until then Apple speech is used.';
+    var why = engineWhy();
+    $('#engineInfo').textContent = why ? 'Using Apple speech: ' + why
+      : cfg.dgKey ? 'Deepgram key received from the PC.' : 'No Deepgram key yet — paste it in the PC panel (or here). Until then Apple speech is used.';
   }
   function renderAll() { renderStatus(); renderQueues(); renderFields(); renderAdd(); renderTranscript(); renderTips(); }
   var resultTimer;
