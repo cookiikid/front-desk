@@ -200,7 +200,7 @@
   <label class="switch">Deepgram key <input type="password" id="dgKey" placeholder="set on the PC"></label>
   <label class="switch">Fall back to Apple speech if Deepgram drops <input type="checkbox" id="fallbackApple"></label>
   <p id="engineInfo"></p>
-  <p id="buildInfo" style="color:var(--muted);font-size:12px">Build Oct 23, 2:25 PM</p>
+  <p id="buildInfo" style="color:var(--muted);font-size:12px">Build Oct 23, 2:34 PM</p>
   <details style="margin:6px 0"><summary style="font-size:13px;color:var(--muted)">What just happened (for debugging)</summary>
     <pre id="diagLog" style="font-size:11px;line-height:1.35;white-space:pre-wrap;max-height:180px;overflow:auto;background:var(--field);padding:8px;border-radius:8px"></pre>
   </details>
@@ -986,6 +986,31 @@ var QSpeech = (function () {
     this.backlog = []; this.backlogN = 0; this.maxBacklog = 8 * SR; // ~8 s of speech kept while reconnecting
   }
   Deepgram.prototype.ev = function (s) { if (this.o.onEvent) this.o.onEvent(s); };
+  // A WebSocket handshake rejected for a bad key and one killed by the network both surface as close 1006 with no
+  // detail, so they are indistinguishable from the browser. One REST call separates them for certain: the
+  // pre-recorded endpoint is the same host with the same auth and is already CORS-allowed for this page.
+  Deepgram.prototype.probeKey = function () {
+    var self = this;
+    if (self.probed || typeof fetch !== 'function') return;
+    self.probed = true;
+    fetch('https://api.deepgram.com/v1/listen?model=nova-3&language=en&mip_opt_out=true', {
+      method: 'POST', headers: { Authorization: 'Token ' + self.o.key, 'Content-Type': 'audio/wav' }, body: wav(new Int16Array(SR / 2))
+    }).then(function (r) {
+      var code = (self.lastClose && self.lastClose.code) || '?';
+      if (r.status === 401 || r.status === 403) {
+        self.ev('key check: HTTP ' + r.status + ' — Deepgram rejected this key');
+        self.o.onStatus('Deepgram rejected this key (HTTP ' + r.status + ') — the phone has the wrong/stale key. Re-send it from the PC panel.', true);
+      } else if (r.ok) {
+        self.ev('key check: key is valid, so the audio socket itself is being blocked');
+        self.o.onStatus('The key is valid, but the audio connection is blocked (close ' + code + ') — network, VPN or firewall.', true);
+      } else {
+        self.ev('key check: HTTP ' + r.status);
+      }
+    }).catch(function () {
+      self.ev('key check: could not reach api.deepgram.com at all from this phone');
+      self.o.onStatus('This phone cannot reach Deepgram at all — check the connection.', true);
+    });
+  };
   Deepgram.prototype.diag = function () {
     return { drops: this.drops, lastClose: this.lastClose, micRebuilds: this.tries, connected: !!(this.ws && this.ws.readyState === 1), buffered: Math.round(this.backlogN / SR * 10) / 10 };
   };
@@ -1207,8 +1232,9 @@ var QSpeech = (function () {
       var code = (self.lastClose && self.lastClose.code) || '?';
       self.ev('socket close ' + code + (micOk ? ' (mic alive)' : ' (no mic audio)'));
       if (!self.everOpened && self.fails >= 3) {
-        // Never connected since the mic was turned on: a key, credit or blocked-host problem.
-        if (self.o.noFallback) self.o.onStatus('Deepgram will not connect (key, credit or network/VPN) — still retrying.', true);
+        // Never connected since the mic was turned on: a key, credit or blocked-host problem. Find out which.
+        self.probeKey();
+        if (self.o.noFallback) self.o.onStatus('Deepgram will not connect — checking whether it is the key or the network…', true);
         else {
           self.o.onStatus('Deepgram would not connect — the key, the credit, or the network/VPN is blocking it. Using Apple speech.', true);
           self.o.onFatal && self.o.onFatal('Deepgram would not connect (key, credit or network/VPN)');
@@ -2207,8 +2233,11 @@ var QKB = (function () {
   }
   function renderEngineInfo() {
     var why = engineWhy();
+    // Show a fingerprint of the key in use (never the key itself): a stale key on the phone and a network problem
+    // both end as "will not connect", and this is the only way to tell them apart at a glance.
+    var fp = cfg.dgKey ? cfg.dgKey.slice(0, 6) + '…' + cfg.dgKey.slice(-4) + ' (' + cfg.dgKey.length + ' chars)' : '';
     var txt = why ? 'Using Apple speech: ' + why
-      : cfg.dgKey ? 'Deepgram key received from the PC.' : 'No Deepgram key yet — paste it in the PC panel (or here). Until then Apple speech is used.';
+      : cfg.dgKey ? 'Deepgram key in use: ' + fp : 'No Deepgram key yet — paste it in the PC panel (or here). Until then Apple speech is used.';
     // Evidence instead of guesswork when something drops out: the close code says whether it was the network
     // (1006 / 1001), Deepgram refusing us (4xxx / 1008) or a server error (1011).
     var d = engine && engine.diag ? engine.diag() : lastDiag;
